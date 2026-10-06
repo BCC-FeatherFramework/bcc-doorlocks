@@ -12,7 +12,7 @@ RegisterNetEvent('bcc-doorlocks:InsertIntoDB', function(doorTable, jobs, keyItem
     local pIds = (#ids > 0 and ids ~= nil) and json.encode(ids) or '[]'
     local allowedJobs = (#jobs > 0 and jobs ~= nil) and json.encode(jobs) or '[]'
     -- Check if the door already exists in the database
-    local doesDoorExist = MySQL.query.await('SELECT * FROM `doorlocks` WHERE `doorinfo` = ?', { json.encode(doorTable) })
+    local doesDoorExist = DB.query('SELECT * FROM `doorlocks` WHERE `doorinfo` = ?', json.encode(doorTable))
     if not doesDoorExist then
         DBG:Error("Database query failed while checking if the door exists.")
         Core.NotifyRightTip(src, _U("dbError"), 4000)
@@ -20,9 +20,9 @@ RegisterNetEvent('bcc-doorlocks:InsertIntoDB', function(doorTable, jobs, keyItem
     end
     if #doesDoorExist <= 0 then
         -- Insert the door if it doesn't exist
-        MySQL.query.await(
+        DB.exec(
             'INSERT INTO `doorlocks` (`jobsallowedtoopen`, `keyitem`, `locked`, `doorinfo`, `ids_allowed`) VALUES (?, ?, ?, ?, ?)',
-            { allowedJobs, kItem, 'true', json.encode(doorTable), pIds })
+            allowedJobs, kItem, 'true', json.encode(doorTable), pIds)
         DBG:Success("Door inserted into DB with jobs: " .. allowedJobs .. ", key: " .. kItem .. ", ids: " .. pIds)
 
         TriggerClientEvent('bcc-doorlocks:ClientSetDoorStatus', -1, doorTable, true, true, false, false)
@@ -34,7 +34,7 @@ RegisterNetEvent('bcc-doorlocks:InsertIntoDB', function(doorTable, jobs, keyItem
     end
 
     -- Fetch the door ID and send it back to the client
-    local result2 = MySQL.query.await('SELECT * FROM `doorlocks` WHERE `doorinfo` = ?', { json.encode(doorTable) })
+    local result2 = DB.query('SELECT * FROM `doorlocks` WHERE `doorinfo` = ?', json.encode(doorTable))
     if #result2 > 0 then
         DBG:Info("Creation ID caught for doorID: " .. result2[1].doorid)
         TriggerClientEvent('bcc-doorlocks:ExportCreationIdCatch', src, result2[1].doorid)
@@ -94,7 +94,7 @@ RegisterNetEvent('bcc-doorlocks:InitLoadDoorLocks', function()
     end
     DBG:Info("InitLoadDoorLocks triggered by source: " .. src)
 
-    local result = MySQL.query.await('SELECT * FROM `doorlocks`')
+    local result = DB.query('SELECT * FROM `doorlocks`')
 
     for k, v in pairs(result) do
         local lockVal
@@ -128,7 +128,7 @@ RegisterNetEvent('bcc-doorlocks:AddPlayerToDoor', function(door, playerId)
     DBG:Info("Processing AddPlayerToDoor. Door: " .. json.encode(door) .. ", Player ID: " .. tostring(playerId))
 
     -- Check if the door already exists
-    local result = MySQL.query.await("SELECT * FROM doorlocks WHERE doorinfo = ?", { json.encode(door) })
+    local result = DB.query("SELECT * FROM doorlocks WHERE doorinfo = ?", json.encode(door))
     local doorId
 
     if result and #result > 0 then
@@ -136,8 +136,8 @@ RegisterNetEvent('bcc-doorlocks:AddPlayerToDoor', function(door, playerId)
         local idsAllowed = json.decode(result[1].ids_allowed or "[]")
         if not table.contains(idsAllowed, playerId) then
             table.insert(idsAllowed, playerId)
-            MySQL.query.await("UPDATE doorlocks SET ids_allowed = ? WHERE doorinfo = ?",
-                { json.encode(idsAllowed), json.encode(door) })
+            DB.exec("UPDATE doorlocks SET ids_allowed = ? WHERE doorinfo = ?",
+                json.encode(idsAllowed), json.encode(door))
             DBG:Success("Player added to existing door.")
         else
             DBG:Warning("Player already has access to this door.")
@@ -145,8 +145,8 @@ RegisterNetEvent('bcc-doorlocks:AddPlayerToDoor', function(door, playerId)
         doorId = result[1].doorid
     else
         -- Door does not exist, create it and fetch the ID
-        local insertResult = MySQL.query.await("INSERT INTO doorlocks (doorinfo, ids_allowed, locked) VALUES (?, ?, ?)",
-            { json.encode(door), json.encode({ playerId }), 'true' })
+        local insertResult = DB.raw("INSERT INTO doorlocks (doorinfo, ids_allowed, locked) VALUES (?, ?, ?)",
+            json.encode(door), json.encode({ playerId }), 'true')
         if insertResult and insertResult.insertId then
             doorId = insertResult.insertId
         else
@@ -172,7 +172,7 @@ RegisterNetEvent('bcc-doorlocks:GetAllDoorlocks', function()
         DBG:Error("User not found for source: " .. tostring(src))
         return
     end
-    local result = MySQL.query.await('SELECT * FROM doorlocks')
+    local result = DB.query('SELECT * FROM doorlocks')
 
     if result then
         TriggerClientEvent('bcc-doorlocks:ReceiveAllDoorlocks', src, result)
@@ -285,7 +285,7 @@ RegisterNetEvent('bcc-doorlocks:GetDoorlockDetails', function(doorId)
         DBG:Error("User not found for source: " .. tostring(src))
         return
     end
-    local result = MySQL.query.await('SELECT * FROM doorlocks WHERE doorid = ?', { doorId })
+    local result = DB.query('SELECT * FROM doorlocks WHERE doorid = ?', doorId)
 
     if result and #result > 0 then
         TriggerClientEvent('bcc-doorlocks:ReceiveDoorlockDetails', src, result[1])
@@ -311,11 +311,11 @@ BccUtils.RPC:Register("bcc-doorlocks:DeleteDoorlock", function(params, cb, recSo
     end
 
     -- Query the database to check if the door exists
-    local result = MySQL.query.await('SELECT * FROM doorlocks WHERE doorid = ?', { doorlockId })
+    local result = DB.query('SELECT * FROM doorlocks WHERE doorid = ?', doorlockId)
 
     if result and #result > 0 then
         -- Delete the door lock from the database
-        MySQL.query.await('DELETE FROM doorlocks WHERE doorid = ?', { doorlockId })
+        DB.exec('DELETE FROM doorlocks WHERE doorid = ?', doorlockId)
         DBG:Success("Successfully deleted door lock ID: " .. tostring(doorlockId))
         Core.NotifyRightTip(src, _U("doorDeleted"), 4000)
         return cb(true)
@@ -333,7 +333,7 @@ RegisterNetEvent('bcc-doorlocks:DeleteDoor', function(doorTable)
         return
     end
     DBG:Info("DeleteDoor triggered for doorTable: " .. json.encode(doorTable))
-    MySQL.query.await('DELETE FROM `doorlocks` WHERE `doorinfo` = ?', { json.encode(doorTable) })
+    DB.exec('DELETE FROM `doorlocks` WHERE `doorinfo` = ?', json.encode(doorTable))
     DBG:Success("Door deleted from DB for doorTable: " .. json.encode(doorTable))
 
     TriggerClientEvent('bcc-doorlocks:ClientSetDoorStatus', -1, doorTable, false, false, true, false)
@@ -372,7 +372,7 @@ RegisterNetEvent('bcc-doorlocks:ServDoorStatusSet', function(doorTable, locked, 
 
     if not isAllowed then
         -- Fetch door information from the database
-        result = MySQL.query.await('SELECT * FROM `doorlocks` WHERE `doorinfo` = ?', { json.encode(doorTable) })
+        result = DB.query('SELECT * FROM `doorlocks` WHERE `doorinfo` = ?', json.encode(doorTable))
 
         if not result or #result == 0 then
             DBG:Error("Door not found in database.")
@@ -416,7 +416,7 @@ RegisterNetEvent('bcc-doorlocks:ServDoorStatusSet', function(doorTable, locked, 
             for _, id in pairs(idsAllowed) do
                 if charId == id then
                     DBG:Info("ID match found for character: " .. charId)
-                    MySQL.query.await('UPDATE `doorlocks` SET `locked` = ? WHERE `doorinfo` = ?', { lockedparam, json.encode(doorTable) })
+                    DB.exec('UPDATE `doorlocks` SET `locked` = ? WHERE `doorinfo` = ?', lockedparam, json.encode(doorTable))
                     TriggerClientEvent('bcc-doorlocks:ClientSetDoorStatus', -1, doorTable, locked, true, false, true, src)
                     return
                 end
@@ -426,7 +426,7 @@ RegisterNetEvent('bcc-doorlocks:ServDoorStatusSet', function(doorTable, locked, 
 
     -- If isAllowed, update the lock status
     if isAllowed then
-        MySQL.query.await('UPDATE `doorlocks` SET `locked` = ? WHERE `doorinfo` = ?', { lockedparam, json.encode(doorTable) })
+        DB.exec('UPDATE `doorlocks` SET `locked` = ? WHERE `doorinfo` = ?', lockedparam, json.encode(doorTable))
         TriggerClientEvent('bcc-doorlocks:ClientSetDoorStatus', -1, doorTable, locked, true, false, true, src)
         return
     end

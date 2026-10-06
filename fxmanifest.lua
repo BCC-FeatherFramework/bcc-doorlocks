@@ -13,7 +13,7 @@ shared_scripts {
 }
 
 server_scripts {
-    '@feather-mysql/lib/MySQL.lua',
+    '@feather-mysql/lib/DB.lua',
     'server/server_init.lua',
     'server/dbUpdater.lua',
     'server/API.lua',

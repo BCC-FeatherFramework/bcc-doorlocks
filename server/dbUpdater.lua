@@ -1,6 +1,6 @@
 CreateThread(function()
     -- Create the doorlocks table if it doesn't exist
-    MySQL.query.await([[
+    DB.exec([[
         CREATE TABLE IF NOT EXISTS `doorlocks` (
             `doorid` int NOT NULL AUTO_INCREMENT,
             `doorinfo` LONGTEXT NOT NULL,
@@ -12,8 +12,8 @@ CreateThread(function()
     ]])
 
     -- Ensure the 'ids_allowed' column is added if it doesn't exist
-    MySQL.query.await([[
-        ALTER TABLE `doorlocks` 
+    DB.exec([[
+        ALTER TABLE `doorlocks`
         ADD COLUMN IF NOT EXISTS `ids_allowed` LONGTEXT DEFAULT NULL;
     ]])
 
@@ -22,7 +22,7 @@ CreateThread(function()
     -- Seed only when enabled, then either on every start or when the table is empty.
     local shouldSeed = false
     local countOk, countRes = pcall(function()
-        return MySQL.query.await('SELECT COUNT(*) as cnt FROM `doorlocks`')
+        return DB.query('SELECT COUNT(*) as cnt FROM `doorlocks`')
     end)
 
     if Config.SeedJailDoors then
@@ -41,12 +41,12 @@ CreateThread(function()
             local doorJson = json.encode(doorTable)
             local exists = nil
             local okq, qerr = pcall(function()
-                exists = MySQL.query.await('SELECT * FROM `doorlocks` WHERE `doorinfo` = ?', { doorJson })
+                exists = DB.query('SELECT * FROM `doorlocks` WHERE `doorinfo` = ?', doorJson)
             end)
             if okq and exists and #exists == 0 then
-                MySQL.query.await(
+                DB.exec(
                     'INSERT INTO `doorlocks` (`doorinfo`, `jobsallowedtoopen`, `keyitem`, `locked`, `ids_allowed`) VALUES (?, ?, ?, ?, ?)',
-                    { doorJson, 'none', 'none', Config.SeedJailDoorsLocked and 'true' or 'false', json.encode({}) }
+                    doorJson, 'none', 'none', Config.SeedJailDoorsLocked and 'true' or 'false', json.encode({})
                 )
                 seededCount = seededCount + 1
             end
@@ -86,7 +86,7 @@ CreateThread(function()
         print("-------------------------------------------------------------")
         print("BCC-Doorlocks - Close non-jail doors on restart \x1b[32mactive\x1b[0m.")
         print("-------------------------------------------------------------")
-        MySQL.query.await([[
+        DB.exec([[
             UPDATE doorlocks
             SET locked = 'true'
             WHERE LOWER(doorinfo) NOT LIKE '%jail%'
@@ -97,7 +97,7 @@ CreateThread(function()
         print("-------------------------------------------------------------")
         print("BCC-Doorlocks - Close jail doors on restart \x1b[32mactive\x1b[0m.")
         print("-------------------------------------------------------------")
-        MySQL.query.await([[
+        DB.exec([[
             UPDATE doorlocks
             SET locked = 'true'
             WHERE LOWER(doorinfo) LIKE '%jail%'
@@ -115,9 +115,9 @@ CreateThread(function()
 
             if doorId and doorId > 0 and doorId % 1 == 0 and not seenDoorIds[doorId] then
                 seenDoorIds[doorId] = true
-                local result = MySQL.update.await(
+                local result = DB.exec(
                     "UPDATE `doorlocks` SET `locked` = 'false' WHERE `doorid` = ?",
-                    { doorId }
+                    doorId
                 )
                 unlockedCount = unlockedCount + (tonumber(result) or 0)
             else
