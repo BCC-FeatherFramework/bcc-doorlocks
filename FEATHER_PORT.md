@@ -80,5 +80,6 @@ and per door `UpdateAllowedIds`, `UpdateAllowedJobs`, `UpdateKeyItem`, `UpdateLo
 1. Live test: create a door, lock/unlock as staff, as a job holder on and off duty,
    with a key item, as an allowed character, and as a stranger (denied).
 2. Double doors, jail-door seeding, restart lock rules and door deletion.
-3. Lockpicking once a minigame resource is installed.
+3. Lockpicking once a minigame resource is installed. Import `sql/install_items.sql` for the
+   `lockpick` item (also in bcc-craft).
 4. Move door access to `feather-access` when that domain exists (master plan Phase 3).
