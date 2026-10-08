@@ -17,7 +17,10 @@ local function debugPrinter(color, label)
     return function(first, second)
         if not Config.devMode.active then return end
         local message = first == DBG and second or first
-        print(('^%d[bcc-doorlocks %s]^0 %s'):format(color, label, tostring(message)))
+        -- One print per line, each ending with ^0 so the color never carries over.
+        for line in (tostring(message) .. '\n'):gmatch('(.-)\n') do
+            print(('^%d[bcc-doorlocks %s]^0 %s^0'):format(color, label, line))
+        end
     end
 end
 
