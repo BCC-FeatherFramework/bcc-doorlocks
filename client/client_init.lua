@@ -1,12 +1,11 @@
-Core = exports.vorp_core:GetCore()
-FeatherMenu = exports['feather-menu'].initiate()
-BccUtils = exports['bcc-utils'].initiate()
-MiniGame = exports['bcc-minigames'].initiate()
-DBG = BccUtils.Debug:Get('bcc-doorlocks', Config.devMode.active)
+-- Menus run on feather-menu-v2 through the local compatibility layer.
+FeatherMenu = FeatherMenuV2Compat
 
-if DBG then
-    DBG:Enable()
-    DBG:Info('Doorlocks debug initialized')
+-- The bcc-minigames lockpick is optional: it is loaded only while that resource runs.
+function GetMiniGame()
+    if GetResourceState('bcc-minigames') ~= 'started' then return nil end
+    local ok, api = pcall(function() return exports['bcc-minigames'].initiate() end)
+    return ok and api or nil
 end
 
 -- Initialize random seed for better math.random usage

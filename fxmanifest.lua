@@ -4,7 +4,7 @@ rdr3_warning 'I acknowledge that this is a prerelease build of RedM, and I am aw
 game 'rdr3'
 lua54 'yes'
 author 'BCC Team'
-version '1.3.2'
+version '2.0.0'
 
 shared_scripts {
     'config.lua',
@@ -14,13 +14,17 @@ shared_scripts {
 
 server_scripts {
     '@feather-mysql/lib/DB.lua',
-    'server/server_init.lua',
+    'server/feather/init.lua',
+    'server/feather/authority.lua',
+    'server/feather/access.lua',
     'server/dbUpdater.lua',
     'server/API.lua',
     'server/server.lua'
 }
 
 client_scripts {
+    'client/feather/init.lua',
+    'client/feather/menu_v2.lua',
     'client/client_init.lua',
     'client/functions.lua',
     'client/client.lua',
@@ -28,11 +32,15 @@ client_scripts {
     'client/MenuSetup.lua'
 }
 
+-- bcc-minigames (or rsd_lockpick) is optional: lockpicking is offered only while it runs.
 dependencies {
-    'vorp_core',
-    'vorp_inventory',
-    'vorp_character',
-    'feather-menu',
-    'bcc-utils',
-    'bcc-minigames'
+    'feather-mysql',
+    'feather-core',
+    'feather-character',
+    'feather-notify',
+    'feather-toolkit',
+    'feather-menu-v2',
+    'feather-inventory',
+    'feather-jobs',
+    'feather-authority'
 }

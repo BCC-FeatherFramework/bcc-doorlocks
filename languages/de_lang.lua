@@ -1,4 +1,4 @@
-Locales["de_lang"] = {
+Feather.Locale.register("de", {
     --Platzhalter
     failedToCreateDoor = 'Keine Tür gefunden',
     doorCreated = 'Tür erfolgreich erstellt!',
@@ -81,4 +81,9 @@ Locales["de_lang"] = {
     confirmDeleteTitle = "Bestätigung der Türlöschung",
     confirmDelete = "Bestätigen",
     cancel = "Abbrechen",
-}
+    dbError = "Database error, try again.",
+    doorNotFound = "Door not found.",
+    noAccess = "You do not have access to this door.",
+    noPermission = "You do not have permission to manage doors.",
+    lockpickUnavailable = "Lockpicking is not available on this server.",
+})

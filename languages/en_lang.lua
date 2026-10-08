@@ -1,4 +1,4 @@
-Locales["en_lang"] = {
+Feather.Locale.register("en_us", {
     --Place Hold
     failedToCreateDoor = 'Failed no door found',
     doorCreated = 'Door successfully created!',
@@ -32,7 +32,7 @@ Locales["en_lang"] = {
     setIds_desc = "Set ID's allowed to lock and unlock the door. To set multiple Id's just choose this option again after you input an id.",
     BackButton = "Back",
     insertJob = 'Insert the job',
-    insertId = 'Insert the character ID',
+    insertId = 'Server ID or character UUID',
     insertKeyItem = 'Insert key Item',
     Confirm = 'Confirm',
     manageDoorlocksTitle = "Door Management",
@@ -71,7 +71,7 @@ Locales["en_lang"] = {
     editAllowedIDs = "Edit Allowed IDs",
     updateAllowedIDs = "Update Allowed IDs for Door ID: ",
     insertAllowedID = "Insert Allowed ID",
-    typeCharacterID = "Type character ID (numeric)...",
+    typeCharacterID = "Server ID or character UUID...",
     allowedIDCannotBeEmpty = "Allowed ID cannot be empty.",
     allowedIDExists = "Character ID already exists in the allowed list.",
     allowedIDsUpdated = "Allowed IDs updated successfully.",
@@ -81,4 +81,9 @@ Locales["en_lang"] = {
     confirmDeleteTitle = "Confirm Door Deletion",
     confirmDelete = "Confirm",
     cancel = "Cancel",
-}
+    dbError = "Database error, try again.",
+    doorNotFound = "Door not found.",
+    noAccess = "You do not have access to this door.",
+    noPermission = "You do not have permission to manage doors.",
+    lockpickUnavailable = "Lockpicking is not available on this server.",
+})

@@ -1,25 +1,39 @@
 IsAdmin = false
 
-RegisterNetEvent('vorp:SelectedCharacter') -- This runs on client char select, setting all door statuses for the client
-AddEventHandler('vorp:SelectedCharacter', function()
-    DBG:Info("SelectedCharacter event triggered. Requesting door locks and admin check.")
+-- Runs when a character spawns: loads every door's state and asks the server
+-- whether this character may manage doors.
+local function StartForCharacter()
+    DBG:Info("Character active. Requesting door locks and admin check.")
     TriggerServerEvent('bcc-doorlocks:InitLoadDoorLocks')
-    TriggerServerEvent('bcc-doorlocks:AdminCheck')
+    FeatherRPC:Call('bcc-doorlocks:AdminCheck', {}, function(allowed)
+        IsAdmin = allowed == true
+        DBG:Info("Admin status: " .. tostring(IsAdmin))
+    end)
+end
+
+RegisterNetEvent('Feather:Character:Spawned', StartForCharacter)
+
+RegisterNetEvent('Feather:Character:Logout', function()
+    IsAdmin = false
 end)
 
-RegisterNetEvent('bcc-doorlocks:AdminVarCatch', function(var) -- admin check catch
-    DBG:Info("AdminVarCatch event triggered. Admin status: " .. tostring(var))
-    if var then
-        IsAdmin = true
-    end
+-- Feather:Character:Spawned fires once; catch up after a resource restart.
+CreateThread(function()
+    Wait(2000)
+    local ok, active = pcall(function() return exports['feather-character']:HasActiveCharacter() end)
+    if ok and active == true then StartForCharacter() end
 end)
 
 RegisterCommand(Config.ManageDoorLocks, function() -- Command to create a door
-    if IsAdmin then
-        ManageDoorLocksMenu()
-    else
-        print("You don't have the required group or job to use this command.")
-    end
+    -- Asks the server each time, so a role granted or revoked meanwhile applies.
+    FeatherRPC:Call('bcc-doorlocks:AdminCheck', {}, function(allowed)
+        IsAdmin = allowed == true
+        if IsAdmin then
+            ManageDoorLocksMenu()
+        else
+            Notify(_U("noPermission"), 4000)
+        end
+    end)
 end, false)
 
 ------ Locking, and unlocking area -----
