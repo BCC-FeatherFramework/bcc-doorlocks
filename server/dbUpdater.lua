@@ -19,6 +19,37 @@ CreateThread(function()
 
     -- Print a success message to the console
     print("Database table for \x1b[35m\x1b[1m*doorlocks*\x1b[0m created or updated \x1b[32msuccessfully\x1b[0m.")
+
+    -- Feather port: allowed IDs are character UUIDs and jobs are a JSON list of
+    -- feather-jobs keys. VORP numeric character IDs cannot be mapped to UUIDs, so
+    -- they are dropped (staff re-add those players); 'none' becomes an empty list.
+    local cleanedRows, droppedIds = 0, 0
+    for _, row in ipairs(DB.query('SELECT `doorid`, `jobsallowedtoopen`, `ids_allowed` FROM `doorlocks`') or {}) do
+        local okJobs, jobs = pcall(json.decode, row.jobsallowedtoopen or '')
+        local okIds, ids = pcall(json.decode, row.ids_allowed or '')
+        jobs = (okJobs and type(jobs) == 'table') and jobs or {}
+        ids = (okIds and type(ids) == 'table') and ids or {}
+
+        local keptJobs = {}
+        for _, job in ipairs(jobs) do
+            if type(job) == 'string' and job ~= 'none' and job ~= '' then keptJobs[#keptJobs + 1] = job:lower() end
+        end
+        local keptIds = {}
+        for _, id in ipairs(ids) do
+            if DoorCharacters.IsUuid(id) then keptIds[#keptIds + 1] = id:lower() else droppedIds = droppedIds + 1 end
+        end
+
+        local newJobs, newIds = json.encode(keptJobs), json.encode(keptIds)
+        if newJobs ~= row.jobsallowedtoopen or newIds ~= row.ids_allowed then
+            DB.exec('UPDATE `doorlocks` SET `jobsallowedtoopen` = ?, `ids_allowed` = ? WHERE `doorid` = ?',
+                newJobs, newIds, row.doorid)
+            cleanedRows = cleanedRows + 1
+        end
+    end
+    if cleanedRows > 0 then
+        print(('[bcc-doorlocks] Converted %d door(s) to Feather access lists; dropped %d legacy numeric character ID(s).')
+            :format(cleanedRows, droppedIds))
+    end
     -- Seed only when enabled, then either on every start or when the table is empty.
     local shouldSeed = false
     local countOk, countRes = pcall(function()
@@ -46,7 +77,7 @@ CreateThread(function()
             if okq and exists and #exists == 0 then
                 DB.exec(
                     'INSERT INTO `doorlocks` (`doorinfo`, `jobsallowedtoopen`, `keyitem`, `locked`, `ids_allowed`) VALUES (?, ?, ?, ?, ?)',
-                    doorJson, 'none', 'none', Config.SeedJailDoorsLocked and 'true' or 'false', json.encode({})
+                    doorJson, '[]', 'none', Config.SeedJailDoorsLocked and 'true' or 'false', '[]'
                 )
                 seededCount = seededCount + 1
             end

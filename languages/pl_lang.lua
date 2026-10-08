@@ -1,4 +1,4 @@
-Locales["pl_lang"] = {
+Feather.Locale.register("pl", {
     -- Place Hold
     failedToCreateDoor = 'Niepowodzenie – nie znaleziono drzwi',
     doorCreated = 'Drzwi zostały pomyślnie utworzone!',
@@ -81,4 +81,9 @@ Locales["pl_lang"] = {
     confirmDeleteTitle = 'Potwierdzenie usunięcia drzwi',
     confirmDelete = 'Potwierdź',
     cancel = 'Anuluj',
-}
+    dbError = "Database error, try again.",
+    doorNotFound = "Door not found.",
+    noAccess = "You do not have access to this door.",
+    noPermission = "You do not have permission to manage doors.",
+    lockpickUnavailable = "Lockpicking is not available on this server.",
+})

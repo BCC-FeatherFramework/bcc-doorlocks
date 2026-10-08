@@ -90,9 +90,9 @@ function DoorCreationMenu(door)
         style = {}
     }, function()
         -- Capture the IDs input
-        RegisterInput(_U("insertId"), _U("setIds"), 'number', doors, function(value)
+        RegisterInput(_U("insertId"), _U("setIds"), 'text', doors, function(value)
             DBG:Info("ID added: " .. tostring(value))
-            Ids[#Ids + 1] = tonumber(value) -- Add the ID to the list
+            Ids[#Ids + 1] = value -- Server ID or character UUID; the server resolves it
         end)
     end)
 
@@ -115,6 +115,7 @@ function DoorCreationMenu(door)
 
         -- Send the door, Jobs, KeyItem, and Ids data to the server
         TriggerServerEvent('bcc-doorlocks:InsertIntoDB', doorPayload, Jobs, KeyItem, Ids)
+        Jobs, KeyItem, Ids = {}, nil, {} -- the next door starts empty
         BCCDoorLocksMenu:Close() -- Close the menu after confirming
     end)
 
@@ -164,7 +165,7 @@ function RegisterInput(label, placeholder, inputType, door, callback)
             inputValue = data.value -- Store the input value
             DBG:Info("Input received: " .. inputValue)
         else
-            Core.NotifyRightTip(_U("InvalidInput"), 4000) -- Notify user of invalid input
+            Notify(_U("InvalidInput"), 4000) -- Notify user of invalid input
             DBG:Warning("Invalid input received")
         end
     end)
@@ -188,7 +189,7 @@ function RegisterInput(label, placeholder, inputType, door, callback)
             BCCDoorLocksMenu:Close()                          -- Close the current menu
             DoorCreationMenu(door)                            -- Reopen the door creation menu
         else
-            Core.NotifyRightTip(_U("InvalidInput"), 4000) -- Notify user of invalid input
+            Notify(_U("InvalidInput"), 4000) -- Notify user of invalid input
             DBG:Warning("No valid input to process")
         end
     end)
@@ -411,11 +412,11 @@ function ShowConfirmationDialog(doorlockId)
         label = _U("confirmDelete"), -- Localization key for the confirm delete button
         style = {}
     }, function()
-        BccUtils.RPC:Call("bcc-doorlocks:DeleteDoorlock", { doorlockId = doorlockId }, function(success)
+        FeatherRPC:Call("bcc-doorlocks:DeleteDoorlock", { doorlockId = doorlockId }, function(success)
             if success then
-                Core.NotifyRightTip(_U("doorRemoved"), 4000)      -- Notify that the door was removed
+                Notify(_U("doorRemoved"), 4000)      -- Notify that the door was removed
             else
-                Core.NotifyRightTip(_U("doorRemoveFailed"), 4000) -- Notify of failure
+                Notify(_U("doorRemoveFailed"), 4000) -- Notify of failure
             end
         end)
         BCCDoorLocksMenu:Close()
@@ -487,11 +488,11 @@ function EditDoorMenu(door)
             style = {}
         }, function()
             if not jobValue or jobValue == "" then
-                Core.NotifyRightTip(_U('jobNameCannotbeEmpty'), 4000)
+                Notify(_U('jobNameCannotbeEmpty'), 4000)
                 return
             end
 
-            BccUtils.RPC:Call("bcc-doorlocks:GetDoorField", { doorId = door.doorid, field = 'jobsallowedtoopen' },
+            FeatherRPC:Call("bcc-doorlocks:GetDoorField", { doorId = door.doorid, field = 'jobsallowedtoopen' },
                 function(existingJobs)
                     if not existingJobs then
                         existingJobs = "[]"
@@ -502,19 +503,19 @@ function EditDoorMenu(door)
                     if not table.contains(jobsTable, jobValue) then
                         table.insert(jobsTable, jobValue)
                     else
-                        Core.NotifyRightTip(_U('jobAlreadyExists'), 4000)
+                        Notify(_U('jobAlreadyExists'), 4000)
                         return
                     end
 
-                    BccUtils.RPC:Call("bcc-doorlocks:UpdateDoorlock", {
+                    FeatherRPC:Call("bcc-doorlocks:UpdateDoorlock", {
                         doorId = door.doorid,
                         field = 'jobsallowedtoopen',
                         value = json.encode(jobsTable)
                     }, function(success)
                         if success then
-                            Core.NotifyRightTip(_U('allowedJobUpdated'), 4000)
+                            Notify(_U('allowedJobUpdated'), 4000)
                         else
-                            Core.NotifyRightTip(_U('allowedJobFailed'), 4000)
+                            Notify(_U('allowedJobFailed'), 4000)
                         end
 
                         -- Return to specific door management menu
@@ -566,7 +567,7 @@ function EditDoorMenu(door)
             keyItemValue = data.value
 
             if not keyItemValue or keyItemValue == "" then
-                Core.NotifyRightTip("Please provide a valid key item name.", 4000)
+                Notify(_U('keyItemNameCannotBeEmpty'), 4000)
                 return
             end
 
@@ -579,16 +580,16 @@ function EditDoorMenu(door)
             style = {}
         }, function()
             if not keyItemValue or keyItemValue == "" then
-                Core.NotifyRightTip(_U('keyItemNameCannotBeEmpty'), 4000)
+                Notify(_U('keyItemNameCannotBeEmpty'), 4000)
                 return
             end
 
-            BccUtils.RPC:Call("bcc-doorlocks:UpdateDoorlock",
+            FeatherRPC:Call("bcc-doorlocks:UpdateDoorlock",
                 { doorId = door.doorid, field = 'keyitem', value = keyItemValue }, function(success)
                     if success then
-                        Core.NotifyRightTip(_U('keyItemUpdated'), 4000)
+                        Notify(_U('keyItemUpdated'), 4000)
                     else
-                        Core.NotifyRightTip(_U('keyItemFailed'), 4000)
+                        Notify(_U('keyItemFailed'), 4000)
                     end
                     DBG:Info("Returning to specific door management menu for door ID: " .. door.doorid)
                     ManageSpecificDoorMenu(door)
@@ -633,10 +634,10 @@ function EditDoorMenu(door)
             placeholder = _U('typeCharacterID'),
             style = {}
         }, function(data)
-            allowedIdValue = tonumber(data.value)
+            allowedIdValue = data.value ~= '' and data.value or nil
 
             if not allowedIdValue then
-                Core.NotifyRightTip("Please provide a valid numeric character ID.", 4000)
+                Notify(_U('allowedIDCannotBeEmpty'), 4000)
                 return
             end
 
@@ -650,11 +651,11 @@ function EditDoorMenu(door)
             style = {}
         }, function()
             if not allowedIdValue then
-                Core.NotifyRightTip(_U('allowedIDCannotBeEmpty'), 4000)
+                Notify(_U('allowedIDCannotBeEmpty'), 4000)
                 return
             end
 
-            BccUtils.RPC:Call("bcc-doorlocks:GetDoorField", { doorId = door.doorid, field = 'ids_allowed' }, function(existingIds)
+            FeatherRPC:Call("bcc-doorlocks:GetDoorField", { doorId = door.doorid, field = 'ids_allowed' }, function(existingIds)
                 if not existingIds then
                     existingIds = "[]"
                 end
@@ -664,16 +665,16 @@ function EditDoorMenu(door)
                 if not table.contains(idsTable, allowedIdValue) then
                     table.insert(idsTable, allowedIdValue)
                 else
-                    Core.NotifyRightTip(_U('allowedIDExists'), 4000)
+                    Notify(_U('allowedIDExists'), 4000)
                     return
                 end
 
-                BccUtils.RPC:Call("bcc-doorlocks:UpdateDoorlock",
+                FeatherRPC:Call("bcc-doorlocks:UpdateDoorlock",
                     { doorId = door.doorid, field = 'ids_allowed', value = json.encode(idsTable) }, function(success)
                         if success then
-                            Core.NotifyRightTip(_U('allowedIDsUpdated'), 4000)
+                            Notify(_U('allowedIDsUpdated'), 4000)
                         else
-                            Core.NotifyRightTip(_U('allowedIDsFailed'), 4000)
+                            Notify(_U('allowedIDsFailed'), 4000)
                         end
                         DBG:Info("Returning to specific door management menu for door ID: " .. door.doorid)
                         ManageSpecificDoorMenu(door)

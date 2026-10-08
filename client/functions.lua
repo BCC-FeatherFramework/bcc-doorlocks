@@ -5,10 +5,10 @@ function GetDoor(type)
 	-- Instructions based on type
 	if type == 'creation' then
 		DBG:Info("Creation mode selected.")
-		Core.NotifyRightTip(_U("createDoorInstructions"), 4000)
+		Notify(_U("createDoorInstructions"), 4000)
 	elseif type == 'deletion' then
 		DBG:Info("Deletion mode selected.")
-		Core.NotifyRightTip(_U("deleteDoorInstructions"), 4000)
+		Notify(_U("deleteDoorInstructions"), 4000)
 	else
 		DBG:Error("Invalid type provided to GetDoor function.")
 		return nil
@@ -51,7 +51,7 @@ function GetDoor(type)
 
 						if door then
 							DBG:Info("Door found.")
-							BccUtils.Misc.DrawText3D(door[4], door[5], door[6] + 1, _U("questionLocking"))
+							DrawText3D(door[4], door[5], door[6] + 1, _U("questionLocking"))
 							if IsControlJustReleased(0, 0x760A9C6F) then -- Confirm with `G` key
 								DBG:Info("Confirmed door selection with `G` key.")
 								break
@@ -72,7 +72,7 @@ function GetDoor(type)
 
 			if door then
 				DBG:Info("Proximity-based door found.")
-				BccUtils.Misc.DrawText3D(door[4], door[5], door[6] + 1, _U("questionLocking"))
+				DrawText3D(door[4], door[5], door[6] + 1, _U("questionLocking"))
 				if IsControlJustReleased(0, 0x760A9C6F) then
 					DBG:Info("Confirmed proximity-based door selection with `G` key.")
 					break
@@ -139,21 +139,30 @@ function LockAndUnlockDoorHandler(doorTable) -- Function to lock/unlock doors (s
 	local entries = GetDoorEntries(doorTable)
 	local primary = entries[1]
 
-	local LockGroup = BccUtils.Prompts:SetupPromptGroup()
-	local UnlockGroup = BccUtils.Prompts:SetupPromptGroup()
-	local LockPrompt = LockGroup:RegisterPrompt(_U("lockDoor"), Config.Keys.lock, 1, 1, true, 'hold', { timedeventhash = "MEDIUM_TIMED_EVENT" })
-	local UnlockPrompt = UnlockGroup:RegisterPrompt(_U("unlockDoor"), Config.Keys.lock, 1, 1, true, 'hold', { timedeventhash = "MEDIUM_TIMED_EVENT" })
-	local LockpickPrompt = nil
-	if Config.LockPicking.allowlockpicking then
-		LockpickPrompt = UnlockGroup:RegisterPrompt(_U("lockpickDoor"), Config.Keys.lockpick, 1, 1, true, 'hold', { timedeventhash = "MEDIUM_TIMED_EVENT" })
-	end
-
 	local doorHash = primary[1]
 	if not DoorHashes[doorHash] then
 		DoorHashes[doorHash] = true
 	else
 		return
 	end
+
+	-- Prompts through feather-toolkit: one group to lock, one to unlock/lockpick.
+	local LockGroup = GetRandomIntInRange(0, 0xffffff)
+	local UnlockGroup = GetRandomIntInRange(0, 0xffffff)
+	local function CreateHoldPrompt(label, control, group)
+		local created = Toolkit:CreatePrompt({ control = control, label = label, groupId = group,
+			mode = 'hold', holdMode = 'MEDIUM_TIMED_EVENT' })
+		return type(created) == 'table' and created.ok and created.value.id or nil
+	end
+	local function Completed(promptId)
+		if not promptId then return false end
+		local result = Toolkit:IsPromptCompleted(promptId)
+		return type(result) == 'table' and result.ok and result.value.completed == true
+	end
+	local LockPrompt = CreateHoldPrompt(_U("lockDoor"), Config.Keys.lock, LockGroup)
+	local UnlockPrompt = CreateHoldPrompt(_U("unlockDoor"), Config.Keys.lock, UnlockGroup)
+	local LockpickPrompt = LockpickingAvailable()
+		and CreateHoldPrompt(_U("lockpickDoor"), Config.Keys.lockpick, UnlockGroup) or nil
 
 	local radius = tonumber(Config.DoorRadius)
 	while true do
@@ -172,22 +181,20 @@ function LockAndUnlockDoorHandler(doorTable) -- Function to lock/unlock doors (s
 		if doorStatus == 2 then break end
 		if dist <= radius then
 			if doorStatus ~= 1 then
-				LockGroup:ShowGroup(_U("doorManage"))
-				if LockPrompt:HasCompleted() then
+				Toolkit:ShowPromptGroup(LockGroup, _U("doorManage"))
+				if Completed(LockPrompt) then
                     DBG:Info("Locking door(s) via prompt.")
                     TriggerServerEvent('bcc-doorlocks:ServDoorStatusSet', doorTable, true, false)
 				end
 			elseif doorStatus ~= 0 then
-				UnlockGroup:ShowGroup(_U("doorManage"))
-				if UnlockPrompt:HasCompleted() then
+				Toolkit:ShowPromptGroup(UnlockGroup, _U("doorManage"))
+				if Completed(UnlockPrompt) then
 					DBG:Info("Unlocking door(s) via prompt.")
 					TriggerServerEvent('bcc-doorlocks:ServDoorStatusSet', doorTable, false, false)
 				end
-				if Config.LockPicking.allowlockpicking then
-					if LockpickPrompt and LockpickPrompt:HasCompleted() then
-						DBG:Info("Lockpicking door(s) via prompt.")
-						TriggerServerEvent('bcc-doorlocks:LockPickCheck', doorTable)
-					end
+				if LockpickPrompt and Completed(LockpickPrompt) then
+					DBG:Info("Lockpicking door(s) via prompt.")
+					TriggerServerEvent('bcc-doorlocks:LockPickCheck', doorTable)
 				end
 			end
 		elseif dist >= 30 and dist < 100 then
@@ -196,11 +203,22 @@ function LockAndUnlockDoorHandler(doorTable) -- Function to lock/unlock doors (s
 			Wait(3000)
 		end
 	end
+	local prompts = { LockPrompt, UnlockPrompt, LockpickPrompt }
+	for index = 1, 3 do
+		if prompts[index] then Toolkit:RemovePrompt(prompts[index]) end
+	end
+	DoorHashes[doorHash] = nil
 end
 
 RegisterNetEvent('bcc-doorlocks:lockpickingMinigame', function(doorTable)
 	DBG:Info("lockpickingMinigame event triggered for doorTable: " .. json.encode(doorTable))
 	if Config.LockPicking.minigameScript == 'bcc_minigames' then
+		local MiniGame = GetMiniGame()
+		if not MiniGame then
+			Notify(_U("lockpickUnavailable"), 4000)
+			TriggerServerEvent('bcc-doorlocks:RemoveLockpick', nil)
+			return
+		end
         -- Determine degrees based on config
         local degrees = {}
         if Config.LockPicking.minigameSettings.randomDegrees then
@@ -239,12 +257,12 @@ RegisterNetEvent('bcc-doorlocks:lockpickingMinigame', function(doorTable)
             local success = (type(result) == 'table' and result.unlocked) or (result == true)
 			if success then
 				DBG:Info("Lockpick succeeded.")
-				Core.NotifyRightTip(_U("lockPicked"), 4000)
+				Notify(_U("lockPicked"), 4000)
 				TriggerServerEvent('bcc-doorlocks:ServDoorStatusSet', doorTable, false, true)
                 return
 			else
 				DBG:Info("Lockpick failed.")
-				TriggerServerEvent('bcc-doorlocks:RemoveLockpick')
+				TriggerServerEvent('bcc-doorlocks:RemoveLockpick', doorTable)
                 return
 			end
 		end)
@@ -254,11 +272,11 @@ RegisterNetEvent('bcc-doorlocks:lockpickingMinigame', function(doorTable)
 		local result = exports.rsd_lockpick:StartLockPick(stand, attempt)
 		if result then
 			DBG:Info("RSD lockpick succeeded.")
-			Core.NotifyRightTip(_U("lockPicked"), 4000)
+			Notify(_U("lockPicked"), 4000)
 			TriggerServerEvent('bcc-doorlocks:ServDoorStatusSet', doorTable, false, true)
 		else
 			DBG:Info("RSD lockpick failed.")
-			TriggerServerEvent('bcc-doorlocks:RemoveLockpick')
+			TriggerServerEvent('bcc-doorlocks:RemoveLockpick', doorTable)
 		end
 	end
 end)

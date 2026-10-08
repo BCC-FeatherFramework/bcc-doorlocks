@@ -1,4 +1,4 @@
-Locales["ro_lang"] = {
+Feather.Locale.register("ro", {
     -- Mesaje pentru locurile detinute
     failedToCreateDoor = 'Esec, nicio usa nu a fost gasita',
     doorCreated = 'Usa creata cu succes!',
@@ -32,7 +32,7 @@ Locales["ro_lang"] = {
     setIds_desc = "Seteaza ID-urile permise sa blocheze si sa deblocheze usa. Pentru a seta mai multe ID-uri, alege aceasta optiune din nou dupa ce introduci un ID.",
     BackButton = "Inapoi",
     insertJob = 'Adauga un job',
-    insertId = 'Adauga ID-ul characterului',
+    insertId = 'ID server sau UUID personaj',
     insertKeyItem = 'Adauga o cheie',
     Confirm = 'Confirma',
     manageDoorlocksTitle = "Administrare Usi",
@@ -71,7 +71,7 @@ Locales["ro_lang"] = {
     editAllowedIDs = "Editeaza ID-urile Permise",
     updateAllowedIDs = "Actualizeaza ID-urile Permise pentru Usa ID: ",
     insertAllowedID = "Introdu ID Permis",
-    typeCharacterID = "Scrie ID-ul personajului (numeric)...",
+    typeCharacterID = "ID server sau UUID personaj...",
     allowedIDCannotBeEmpty = "ID-ul permis nu poate fi gol.",
     allowedIDExists = "ID-ul personajului exista deja in lista permisa.",
     allowedIDsUpdated = "ID-urile permise au fost actualizate cu succes.",
@@ -81,4 +81,9 @@ Locales["ro_lang"] = {
     confirmDeleteTitle = "Confirma Stergerea Usii",
     confirmDelete = "Confirma",
     cancel = "Anuleaza",
-}
+    dbError = "Eroare la baza de date, incearca din nou.",
+    doorNotFound = "Usa nu a fost gasita.",
+    noAccess = "Nu ai acces la aceasta usa.",
+    noPermission = "Nu ai permisiunea de a administra usile.",
+    lockpickUnavailable = "Spargerea incuietorilor nu este disponibila pe acest server.",
+})

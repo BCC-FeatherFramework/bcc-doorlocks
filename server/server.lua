@@ -1,482 +1,377 @@
-RegisterNetEvent('bcc-doorlocks:InsertIntoDB', function(doorTable, jobs, keyItem, ids)
-    local src = source
-    local user = Core.getUser(src)
-    if not user then
-        DBG:Error("User not found for source: " .. tostring(src))
-        return
+-- Every handler derives the player from the feather-core session and checks its
+-- own permission on the server. Staff actions need the Authority capability
+-- (Config.Admin.capability); locking needs a matching job, key item or
+-- allowed character; a lockpick result is only accepted after this server
+-- started that lockpick for that player and door.
+
+local function SafeDecode(value, fallback)
+    if type(value) ~= 'string' or value == '' then return fallback end
+    local ok, decoded = pcall(json.decode, value)
+    if ok and decoded ~= nil then return decoded end
+    return fallback
+end
+
+-- A door is { hash, model, name, x, y, z }; a double door is a list of two.
+local function IsWhole(value)
+    return type(value) == 'number' and value % 1 == 0
+end
+
+local function IsDoorEntry(entry)
+    return type(entry) == 'table' and IsWhole(entry[1]) and IsWhole(entry[2])
+        and type(entry[3]) == 'string' and #entry[3] <= 128
+        and type(entry[4]) == 'number' and type(entry[5]) == 'number' and type(entry[6]) == 'number'
+end
+
+local function IsDoorTable(doorTable)
+    if IsDoorEntry(doorTable) then return true end
+    return type(doorTable) == 'table' and #doorTable == 2 and IsDoorEntry(doorTable[1]) and IsDoorEntry(doorTable[2])
+end
+
+local function DoorEntries(doorTable)
+    return IsDoorEntry(doorTable) and { doorTable } or doorTable
+end
+
+-- Server-side distance check against the nearest linked door. Skipped when the
+-- server cannot see the player's position (coordinates at the origin).
+local function IsNearDoor(src, doorTable)
+    if not Config.ServerDistanceCheck then return true end
+    local ped = GetPlayerPed(src)
+    if not ped or ped == 0 then return true end
+    local coords = GetEntityCoords(ped)
+    if coords.x == 0.0 and coords.y == 0.0 and coords.z == 0.0 then return true end
+    local limit = (tonumber(Config.DoorRadius) or 1.5) + 3.0
+    for _, entry in ipairs(DoorEntries(doorTable)) do
+        if #(coords - vector3(entry[4], entry[5], entry[6])) <= limit then return true end
     end
-    DBG:Info("InsertIntoDB triggered with doorTable: " .. json.encode(doorTable))
-
-    -- Ensure keyItem, jobs, and ids are properly set, with sensible defaults
-    local kItem = (keyItem ~= nil and keyItem ~= "") and keyItem or 'none'
-    local pIds = (#ids > 0 and ids ~= nil) and json.encode(ids) or '[]'
-    local allowedJobs = (#jobs > 0 and jobs ~= nil) and json.encode(jobs) or '[]'
-    -- Check if the door already exists in the database
-    local doesDoorExist = DB.query('SELECT * FROM `doorlocks` WHERE `doorinfo` = ?', json.encode(doorTable))
-    if not doesDoorExist then
-        DBG:Error("Database query failed while checking if the door exists.")
-        Core.NotifyRightTip(src, _U("dbError"), 4000)
-        return
-    end
-    if #doesDoorExist <= 0 then
-        -- Insert the door if it doesn't exist
-        DB.exec(
-            'INSERT INTO `doorlocks` (`jobsallowedtoopen`, `keyitem`, `locked`, `doorinfo`, `ids_allowed`) VALUES (?, ?, ?, ?, ?)',
-            allowedJobs, kItem, 'true', json.encode(doorTable), pIds)
-        DBG:Success("Door inserted into DB with jobs: " .. allowedJobs .. ", key: " .. kItem .. ", ids: " .. pIds)
-
-        TriggerClientEvent('bcc-doorlocks:ClientSetDoorStatus', -1, doorTable, true, true, false, false)
-
-        Core.NotifyRightTip(src, _U("doorCreated"), 4000)
-    else
-        DBG:Warning("Door already exists in DB")
-        Core.NotifyRightTip(src, _U("doorExists"), 4000)
-    end
-
-    -- Fetch the door ID and send it back to the client
-    local result2 = DB.query('SELECT * FROM `doorlocks` WHERE `doorinfo` = ?', json.encode(doorTable))
-    if #result2 > 0 then
-        DBG:Info("Creation ID caught for doorID: " .. result2[1].doorid)
-        TriggerClientEvent('bcc-doorlocks:ExportCreationIdCatch', src, result2[1].doorid)
-    end
-end)
-
-local function CheckAdmin(character)
-    -- Check if the user has an allowed group
-    for _, group in pairs(Config.AllowedGroups) do
-        if character.group == group.groupName then
-            return true
-        end
-    end
-
-    -- Check if the user has an allowed job
-    for _, job in pairs(Config.AllowedJobs) do
-        if character.job == job.jobName then
-            return true
-        end
-    end
-
     return false
 end
 
-RegisterNetEvent("bcc-doorlocks:AdminCheck", function()
+local function IsAdmin(src)
+    local allowed = DoorAuthority.IsAllowed(src)
+    return allowed == true
+end
+
+-- Validates the access lists a staff member submits. Jobs are feather-jobs keys,
+-- ids are character UUIDs or connected server IDs (resolved to UUIDs here).
+local function CleanJobs(jobs)
+    local cleaned = {}
+    if type(jobs) ~= 'table' then return cleaned end
+    for _, job in ipairs(jobs) do
+        local key = type(job) == 'string' and job:lower() or nil
+        if DoorJobs.IsJobKey(key) and #cleaned < 32 then cleaned[#cleaned + 1] = key end
+    end
+    return cleaned
+end
+
+local function CleanIds(ids)
+    local cleaned, seen = {}, {}
+    if type(ids) ~= 'table' then return cleaned end
+    for _, id in ipairs(ids) do
+        local characterId = DoorCharacters.Resolve(id)
+        if characterId and not seen[characterId] and #cleaned < 64 then
+            seen[characterId] = true
+            cleaned[#cleaned + 1] = characterId
+        end
+    end
+    return cleaned
+end
+
+local function CleanKeyItem(keyItem)
+    if DoorInventory.IsItemName(keyItem) then return keyItem end
+    return 'none'
+end
+
+local function SetDoorLocked(doorTable, locked, src)
+    DB.exec('UPDATE `doorlocks` SET `locked` = ? WHERE `doorinfo` = ?', locked and 'true' or 'false', json.encode(doorTable))
+    TriggerClientEvent('bcc-doorlocks:ClientSetDoorStatus', -1, doorTable, locked, true, false, true, src)
+end
+
+RegisterNetEvent('bcc-doorlocks:InsertIntoDB', function(doorTable, jobs, keyItem, ids)
     local src = source
-    local user = Core.getUser(src)
-    if not user then
-        DBG:Error("User not found for source: " .. tostring(src))
-        return
+    if not IsAdmin(src) then return DBG:Warning('InsertIntoDB denied for ' .. tostring(src)) end
+    if not IsDoorTable(doorTable) then return NotifyClient(src, _U("dbError"), 4000) end
+    DBG:Info("InsertIntoDB triggered with doorTable: " .. json.encode(doorTable))
+
+    local kItem = CleanKeyItem(keyItem)
+    local pIds = json.encode(CleanIds(ids))
+    local allowedJobs = json.encode(CleanJobs(jobs))
+    local doorJson = json.encode(doorTable)
+
+    local doesDoorExist = DB.query('SELECT `doorid` FROM `doorlocks` WHERE `doorinfo` = ?', doorJson)
+    if not doesDoorExist then
+        DBG:Error("Database query failed while checking if the door exists.")
+        return NotifyClient(src, _U("dbError"), 4000)
+    end
+    if #doesDoorExist <= 0 then
+        DB.exec(
+            'INSERT INTO `doorlocks` (`jobsallowedtoopen`, `keyitem`, `locked`, `doorinfo`, `ids_allowed`) VALUES (?, ?, ?, ?, ?)',
+            allowedJobs, kItem, 'true', doorJson, pIds)
+        DBG:Success("Door inserted into DB with jobs: " .. allowedJobs .. ", key: " .. kItem .. ", ids: " .. pIds)
+        TriggerClientEvent('bcc-doorlocks:ClientSetDoorStatus', -1, doorTable, true, true, false, false)
+        NotifyClient(src, _U("doorCreated"), 4000)
+    else
+        DBG:Warning("Door already exists in DB")
+        NotifyClient(src, _U("doorExists"), 4000)
     end
 
-    local character = user.getUsedCharacter
-    if not character then
-        DBG:Error("Character object is nil for source: " .. tostring(src))
-        return
+    local created = DB.query('SELECT `doorid` FROM `doorlocks` WHERE `doorinfo` = ?', doorJson)
+    if created and #created > 0 then
+        TriggerClientEvent('bcc-doorlocks:ExportCreationIdCatch', src, created[1].doorid)
     end
+end)
 
-    local charId = character.charIdentifier
-    DBG:Info("AdminCheck triggered for character: " .. (charId or "Unknown Identifier"))
-
-    if CheckAdmin(character) then
-        TriggerClientEvent('bcc-doorlocks:AdminVarCatch', src, true)
-        DBG:Info("Character " .. charId .. " is an admin for door management.")
-        return
-    end
-
-    DBG:Warning("Character " .. charId .. " is not in an allowed group or job.")
+FeatherRPC:Register('bcc-doorlocks:AdminCheck', function(_, cb, src)
+    cb(IsAdmin(src))
 end)
 
 RegisterNetEvent('bcc-doorlocks:InitLoadDoorLocks', function()
     local src = source
-    local user = Core.getUser(src)
-    if not user then
-        DBG:Error("User not found for source: " .. tostring(src))
-        return
-    end
+    if not DoorCharacters.Get(src) then return end
     DBG:Info("InitLoadDoorLocks triggered by source: " .. src)
 
-    local result = DB.query('SELECT * FROM `doorlocks`')
-
-    for k, v in pairs(result) do
-        local lockVal
-        if v.locked == 'true' then
-            lockVal = true
-        else
-            lockVal = false
+    for _, v in ipairs(DB.query('SELECT `doorinfo`, `locked` FROM `doorlocks`') or {}) do
+        local doorTable = SafeDecode(v.doorinfo, nil)
+        if IsDoorTable(doorTable) then
+            TriggerClientEvent('bcc-doorlocks:ClientSetDoorStatus', src, doorTable, v.locked == 'true', true, false, false)
         end
-
-        local doorTable = json.decode(v.doorinfo)
-        DBG:Info("Setting door status for doorTable: " .. json.encode(doorTable) .. " Locked: " .. tostring(lockVal))
-        TriggerClientEvent('bcc-doorlocks:ClientSetDoorStatus', src, doorTable, lockVal, true, false, false)
     end
 end)
 
+-- Staff only: grants a character access to a door, creating the door if needed.
+-- Other resources should use the server API (exports['bcc-doorlocks']:getDoorLocksAPI()).
 RegisterNetEvent('bcc-doorlocks:AddPlayerToDoor', function(door, playerId)
     local src = source
-    local user = Core.getUser(src)
-    if not user then
-        DBG:Error("User not found for source: " .. tostring(src))
-        return
-    end
-    local character = user.getUsedCharacter
-    local playerId = character.charIdentifier
-    -- Validate inputs
-    if not door or not playerId then
-        DBG:Error("Invalid door or playerId in AddPlayerToDoor event.")
-        return
+    if not IsAdmin(src) then return DBG:Warning('AddPlayerToDoor denied for ' .. tostring(src)) end
+    local characterId = DoorCharacters.Resolve(playerId)
+    if not IsDoorTable(door) or not characterId then
+        return DBG:Error("Invalid door or player in AddPlayerToDoor event.")
     end
 
-    DBG:Info("Processing AddPlayerToDoor. Door: " .. json.encode(door) .. ", Player ID: " .. tostring(playerId))
-
-    -- Check if the door already exists
-    local result = DB.query("SELECT * FROM doorlocks WHERE doorinfo = ?", json.encode(door))
+    local doorJson = json.encode(door)
+    local result = DB.query("SELECT `doorid`, `ids_allowed` FROM doorlocks WHERE doorinfo = ?", doorJson)
     local doorId
 
     if result and #result > 0 then
-        -- Door exists, update allowed IDs
-        local idsAllowed = json.decode(result[1].ids_allowed or "[]")
-        if not table.contains(idsAllowed, playerId) then
-            table.insert(idsAllowed, playerId)
-            DB.exec("UPDATE doorlocks SET ids_allowed = ? WHERE doorinfo = ?",
-                json.encode(idsAllowed), json.encode(door))
-            DBG:Success("Player added to existing door.")
-        else
-            DBG:Warning("Player already has access to this door.")
+        local idsAllowed = SafeDecode(result[1].ids_allowed, {})
+        if not table.contains(idsAllowed, characterId) then
+            table.insert(idsAllowed, characterId)
+            DB.exec("UPDATE doorlocks SET ids_allowed = ? WHERE doorinfo = ?", json.encode(idsAllowed), doorJson)
         end
         doorId = result[1].doorid
     else
-        -- Door does not exist, create it and fetch the ID
         local insertResult = DB.raw("INSERT INTO doorlocks (doorinfo, ids_allowed, locked) VALUES (?, ?, ?)",
-            json.encode(door), json.encode({ playerId }), 'true')
+            doorJson, json.encode({ characterId }), 'true')
         if insertResult and insertResult.insertId then
             doorId = insertResult.insertId
         else
-            DBG:Error("Failed to insert door into database.")
-            return
+            return DBG:Error("Failed to insert door into database.")
         end
-        DBG:Success("New door created and player added.")
     end
 
-    if doorId then
-        DBG:Info("Returning door ID: " .. tostring(doorId))
-        TriggerClientEvent('bcc-doorlocks:ExportCreationIdCatch', src, doorId)
-    else
-        DBG:Error("Failed to retrieve or create door ID.")
-    end
+    TriggerClientEvent('bcc-doorlocks:ExportCreationIdCatch', src, doorId)
 end)
-
 
 RegisterNetEvent('bcc-doorlocks:GetAllDoorlocks', function()
     local src = source
-    local user = Core.getUser(src)
-    if not user then
-        DBG:Error("User not found for source: " .. tostring(src))
-        return
-    end
+    if not IsAdmin(src) then return end
     local result = DB.query('SELECT * FROM doorlocks')
-
     if result then
         TriggerClientEvent('bcc-doorlocks:ReceiveAllDoorlocks', src, result)
     else
-        TriggerClientEvent('Core:NotifyRightTip', src, "Failed to fetch doorlocks.", 4000)
+        NotifyClient(src, _U("dbError"), 4000)
     end
 end)
 
-BccUtils.RPC:Register("bcc-doorlocks:GetDoorField", function(params, cb, recSource)
-    local src = recSource
-    local user = Core.getUser(src)
-    if not user then
-        DBG:Error("User not found for source: " .. tostring(src))
-        return cb(nil)
-    end
-    local doorId = params.doorId
-    local field = params.field
+FeatherRPC:Register("bcc-doorlocks:GetDoorField", function(params, cb, src)
+    if not IsAdmin(src) then return cb(nil) end
+    local door = DoorLocksAPI:GetDoorById(tonumber(params.doorId))
+    if not door then return cb(nil) end
 
-    if not doorId or not field then
-        DBG:Error("Invalid parameters for GetDoorField: Door ID or field is missing.")
-        return cb(nil)
-    end
-
-    local door = DoorLocksAPI:GetDoorById(doorId)
-
-    if not door then
-        DBG:Error("Door ID not found in API: " .. tostring(doorId))
-        return cb(nil)
-    end
-
-    -- Dynamically fetch the specified field
     local result
-    if field == 'jobsallowedtoopen' then
+    if params.field == 'jobsallowedtoopen' then
         result = door:GetAllowedJobs()
-    elseif field == 'ids_allowed' then
+    elseif params.field == 'ids_allowed' then
         result = door:GetAllowedIds()
-    elseif field == 'keyitem' then
+    elseif params.field == 'keyitem' then
         result = door:GetKeyItem()
     else
-        DBG:Error("Invalid field specified for GetDoorField: " .. tostring(field))
         return cb(nil)
     end
-
-    DBG:Info("Fetched " .. field .. " for door ID: " .. tostring(doorId) .. ": " .. json.encode(result))
-    cb(json.encode(result)) -- Return the field's value as JSON
+    cb(json.encode(result))
 end)
 
-BccUtils.RPC:Register("bcc-doorlocks:UpdateDoorlock", function(params, cb, recSource)
-    local src = recSource
-    local user = Core.getUser(src)
-    if not user then
-        DBG:Error("User not found for source: " .. tostring(src))
-        return cb(false)
-    end
-    local doorId = params.doorId
-    local field = params.field
-    local value = params.value
+FeatherRPC:Register("bcc-doorlocks:UpdateDoorlock", function(params, cb, src)
+    if not IsAdmin(src) then return cb(false) end
+    local door = DoorLocksAPI:GetDoorById(tonumber(params.doorId))
+    if not door or params.value == nil then return cb(false) end
 
-    -- Validate parameters
-    if not doorId or not field or not value then
-        DBG:Error("Invalid parameters for UpdateDoorlock: Door ID, field, or value is missing.")
-        return cb(false)
-    end
-
-    local door = DoorLocksAPI:GetDoorById(doorId)
-
-    -- Validate door existence
-    if not door then
-        DBG:Error("Door ID not found in API: " .. tostring(doorId))
-        return cb(false)
-    end
-
-    -- Update the specified field
+    local field, value = params.field, params.value
     if field == 'jobsallowedtoopen' then
-        local jobs = type(value) == "string" and json.decode(value) or value
-        if not jobs or type(jobs) ~= "table" then
-            DBG:Error("Invalid jobs data provided for door ID: " .. tostring(doorId))
-            return cb(false)
-        end
-        door:UpdateAllowedJobs(jobs)
-        DBG:Success("Updated allowed jobs for door ID: " .. tostring(doorId))
+        local jobs = type(value) == "string" and SafeDecode(value, nil) or value
+        if type(jobs) ~= "table" then return cb(false) end
+        door:UpdateAllowedJobs(CleanJobs(jobs))
     elseif field == 'keyitem' then
-        if type(value) ~= "string" then
-            DBG:Error("Invalid key item provided for door ID: " .. tostring(doorId))
-            return cb(false)
-        end
-        door:UpdateKeyItem(value)
-        DBG:Success("Updated key item for door ID: " .. tostring(doorId))
+        if type(value) ~= "string" then return cb(false) end
+        door:UpdateKeyItem(CleanKeyItem(value))
     elseif field == 'ids_allowed' then
-        local ids = type(value) == "string" and json.decode(value) or value
-        if not ids or type(ids) ~= "table" then
-            DBG:Error("Invalid allowed IDs provided for door ID: " .. tostring(doorId))
-            return cb(false)
-        end
-        door:UpdateAllowedIds(ids)
-        DBG:Success("Updated allowed IDs for door ID: " .. tostring(doorId))
+        local ids = type(value) == "string" and SafeDecode(value, nil) or value
+        if type(ids) ~= "table" then return cb(false) end
+        door:UpdateAllowedIds(CleanIds(ids))
     else
-        DBG:Error("Invalid field specified for UpdateDoorlock: " .. tostring(field))
         return cb(false)
     end
-
-    -- Return success after updates
+    DBG:Success(("Updated %s for door ID: %s"):format(field, tostring(params.doorId)))
     cb(true)
 end)
 
 RegisterNetEvent('bcc-doorlocks:GetDoorlockDetails', function(doorId)
     local src = source
-    local user = Core.getUser(src)
-    if not user then
-        DBG:Error("User not found for source: " .. tostring(src))
-        return
-    end
-    local result = DB.query('SELECT * FROM doorlocks WHERE doorid = ?', doorId)
-
+    if not IsAdmin(src) then return end
+    local result = DB.query('SELECT * FROM doorlocks WHERE doorid = ?', tonumber(doorId))
     if result and #result > 0 then
         TriggerClientEvent('bcc-doorlocks:ReceiveDoorlockDetails', src, result[1])
     else
-        TriggerClientEvent('Core:NotifyRightTip', src, "Door not found.", 4000)
+        NotifyClient(src, _U("doorNotFound"), 4000)
     end
 end)
 
--- Register the RPC for deleting a door lock
-BccUtils.RPC:Register("bcc-doorlocks:DeleteDoorlock", function(params, cb, recSource)
-    local src = recSource
-    local user = Core.getUser(src)
-    if not user then
-        DBG:Error("User not found for source: " .. tostring(src))
-        return cb(false)
-    end
-    local doorlockId = params.doorlockId
+FeatherRPC:Register("bcc-doorlocks:DeleteDoorlock", function(params, cb, src)
+    if not IsAdmin(src) then return cb(false) end
+    local doorlockId = tonumber(params.doorlockId)
+    local result = doorlockId and DB.query('SELECT `doorinfo` FROM doorlocks WHERE doorid = ?', doorlockId)
+    if not result or #result == 0 then return cb(false) end
 
-    -- Validate the doorlock ID
-    if not doorlockId then
-        DBG:Error("Invalid doorlock ID provided for deletion.")
-        return cb(false)
+    DB.exec('DELETE FROM doorlocks WHERE doorid = ?', doorlockId)
+    local doorTable = SafeDecode(result[1].doorinfo, nil)
+    if IsDoorTable(doorTable) then
+        TriggerClientEvent('bcc-doorlocks:ClientSetDoorStatus', -1, doorTable, false, false, true, false)
     end
-
-    -- Query the database to check if the door exists
-    local result = DB.query('SELECT * FROM doorlocks WHERE doorid = ?', doorlockId)
-
-    if result and #result > 0 then
-        -- Delete the door lock from the database
-        DB.exec('DELETE FROM doorlocks WHERE doorid = ?', doorlockId)
-        DBG:Success("Successfully deleted door lock ID: " .. tostring(doorlockId))
-        Core.NotifyRightTip(src, _U("doorDeleted"), 4000)
-        return cb(true)
-    else
-        DBG:Error("Door lock ID not found: " .. tostring(doorlockId))
-        return cb(false)
-    end
+    DBG:Success("Deleted door lock ID: " .. tostring(doorlockId))
+    NotifyClient(src, _U("doorDeleted"), 4000)
+    cb(true)
 end)
 
 RegisterNetEvent('bcc-doorlocks:DeleteDoor', function(doorTable)
     local src = source
-    local user = Core.getUser(src)
-    if not user then
-        DBG:Error("User not found for source: " .. tostring(src))
-        return
-    end
-    DBG:Info("DeleteDoor triggered for doorTable: " .. json.encode(doorTable))
+    if not IsAdmin(src) or not IsDoorTable(doorTable) then return end
     DB.exec('DELETE FROM `doorlocks` WHERE `doorinfo` = ?', json.encode(doorTable))
-    DBG:Success("Door deleted from DB for doorTable: " .. json.encode(doorTable))
-
     TriggerClientEvent('bcc-doorlocks:ClientSetDoorStatus', -1, doorTable, false, false, true, false)
+    NotifyClient(src, _U("doorDeleted"), 4000)
+end)
 
-    Core.NotifyRightTip(src, _U("doorDeleted"), 4000)
+-- Lockpicking ------------------------------------------------------------------
+-- The server starts a lockpick only for a player who holds the item and stands
+-- at the door, and remembers it briefly. The client's minigame result is only
+-- accepted for that same door within the window, once.
+
+local pendingLockpicks = {} -- src -> { door = doorJson, expires = ms }
+local LOCKPICK_WINDOW_MS = 120000
+
+local function TakePendingLockpick(src, doorTable)
+    local pending = pendingLockpicks[src]
+    pendingLockpicks[src] = nil
+    return pending ~= nil and pending.door == json.encode(doorTable) and GetGameTimer() <= pending.expires
+end
+
+AddEventHandler('playerDropped', function()
+    pendingLockpicks[source] = nil
 end)
 
 RegisterNetEvent('bcc-doorlocks:ServDoorStatusSet', function(doorTable, locked, lockpicked)
     local src = source
-    local user = Core.getUser(src)
-    if not user then
-        DBG:Error("User not found for source: " .. tostring(src))
-        return
+    local characterId = DoorCharacters.Get(src)
+    if not characterId or not IsDoorTable(doorTable) or type(locked) ~= 'boolean' then return end
+    if not IsNearDoor(src, doorTable) then return DBG:Warning('Door toggle out of range for ' .. tostring(src)) end
+
+    if lockpicked == true then
+        if locked == false and TakePendingLockpick(src, doorTable) then
+            DBG:Info("Lockpick successful for doorTable: " .. json.encode(doorTable))
+            return SetDoorLocked(doorTable, false, src)
+        end
+        return DBG:Warning('Unverified lockpick result from ' .. tostring(src))
     end
 
-    local character = user.getUsedCharacter
-    local charId = character.charIdentifier
-    DBG:Info("ServDoorStatusSet triggered with door status: " .. tostring(locked))
+    if IsAdmin(src) then return SetDoorLocked(doorTable, locked, src) end
 
-    local lockedparam = locked and 'true' or 'false'
-    local isAllowed = false
-    local result, doorData
+    local result = DB.query('SELECT * FROM `doorlocks` WHERE `doorinfo` = ?', json.encode(doorTable))
+    if not result or #result == 0 then return DBG:Error("Door not found in database.") end
+    local doorData = result[1]
 
-    -- Handle lockpicked case
-    if lockpicked then
-        DBG:Info("Lockpick successful for doorTable: " .. json.encode(doorTable))
-        isAllowed = true
-    end
-
-    -- Check if the user has admin privileges from config (group/job)
-    if not isAllowed then
-        if CheckAdmin(character) then
-            isAllowed = true
+    for _, job in ipairs(SafeDecode(doorData.jobsallowedtoopen, {})) do
+        if DoorJobs.Holds(characterId, job) then
+            DBG:Info("Job match found for character: " .. characterId)
+            return SetDoorLocked(doorTable, locked, src)
         end
     end
 
-    if not isAllowed then
-        -- Fetch door information from the database
-        result = DB.query('SELECT * FROM `doorlocks` WHERE `doorinfo` = ?', json.encode(doorTable))
-
-        if not result or #result == 0 then
-            DBG:Error("Door not found in database.")
-            return
-        end
-
-        doorData = result[1]
+    if doorData.keyitem ~= 'none' and DoorInventory.Count(src, doorData.keyitem) >= 1 then
+        DBG:Info("Key item found for character: " .. characterId)
+        return SetDoorLocked(doorTable, locked, src)
     end
 
-    if not isAllowed then
-        -- Check jobsallowedtoopen database field
-        local jobsAllowed = json.decode(doorData.jobsallowedtoopen or "[]")
-        if jobsAllowed and type(jobsAllowed) == "table" then
-            for _, job in pairs(jobsAllowed) do
-                if job == "none" then
-                    DBG:Info("Job is set to 'none', skipping job check.")
-                    break
-                elseif character.job == job then
-                    DBG:Info("Job match found for character: " .. charId)
-                    isAllowed = true
-                    break
-                end
-            end
+    for _, id in ipairs(SafeDecode(doorData.ids_allowed, {})) do
+        if id == characterId then
+            DBG:Info("ID match found for character: " .. characterId)
+            return SetDoorLocked(doorTable, locked, src)
         end
     end
 
-    if not isAllowed then
-        -- Check inventory for keyitem
-        if doorData.keyitem ~= "none" then
-            if exports.vorp_inventory:getItemCount(src, nil, tostring(doorData.keyitem)) >= 1 then
-                DBG:Info("Key item found for character: " .. charId)
-                isAllowed = true
-            end
-        end
-    end
-
-    if not isAllowed then
-        -- Check ids_allowed database field
-        local idsAllowed = json.decode(doorData.ids_allowed or "[]")
-        if idsAllowed and type(idsAllowed) == "table" then
-            for _, id in pairs(idsAllowed) do
-                if charId == id then
-                    DBG:Info("ID match found for character: " .. charId)
-                    DB.exec('UPDATE `doorlocks` SET `locked` = ? WHERE `doorinfo` = ?', lockedparam, json.encode(doorTable))
-                    TriggerClientEvent('bcc-doorlocks:ClientSetDoorStatus', -1, doorTable, locked, true, false, true, src)
-                    return
-                end
-            end
-        end
-    end
-
-    -- If isAllowed, update the lock status
-    if isAllowed then
-        DB.exec('UPDATE `doorlocks` SET `locked` = ? WHERE `doorinfo` = ?', lockedparam, json.encode(doorTable))
-        TriggerClientEvent('bcc-doorlocks:ClientSetDoorStatus', -1, doorTable, locked, true, false, true, src)
-        return
-    end
-
-    -- If all checks fail, deny access
-    DBG:Error("Access denied for character: " .. charId .. " to doorTable: " .. json.encode(doorTable))
+    DBG:Error("Access denied for character: " .. characterId .. " to doorTable: " .. json.encode(doorTable))
+    NotifyClient(src, _U("noAccess"), 4000)
 end)
 
 RegisterNetEvent('bcc-doorlocks:LockPickCheck', function(doorTable)
     local src = source
-    local user = Core.getUser(src)
-    if not user then
-        DBG:Error("User not found for source: " .. tostring(src))
-        return
+    if not Config.LockPicking.allowlockpicking or not DoorCharacters.Get(src) or not IsDoorTable(doorTable) then return end
+    if not IsNearDoor(src, doorTable) then return end
+    if GetResourceState('bcc-minigames') ~= 'started' and Config.LockPicking.minigameScript == 'bcc_minigames' then
+        return NotifyClient(src, _U("lockpickUnavailable"), 4000)
     end
-    DBG:Info("LockPickCheck triggered for user: " .. src)
 
-    local lockpickItem = Config.LockPicking.minigameSettings.lockpickitem
-    local metadata = nil
-
-    local itemCount = exports.vorp_inventory:getItemCount(src, nil, lockpickItem, metadata)
-
-    if itemCount >= 1 then
-        DBG:Info("User has lockpick item")
+    if DoorInventory.Count(src, Config.LockPicking.minigameSettings.lockpickitem) >= 1 then
+        pendingLockpicks[src] = { door = json.encode(doorTable), expires = GetGameTimer() + LOCKPICK_WINDOW_MS }
         TriggerClientEvent('bcc-doorlocks:lockpickingMinigame', src, doorTable)
     else
-        DBG:Info("User does not have lockpick item")
-        Core.NotifyRightTip(src, _U("noLockpick"), 4000)
+        NotifyClient(src, _U("noLockpick"), 4000)
     end
 end)
 
-RegisterNetEvent('bcc-doorlocks:RemoveLockpick', function()
+-- A failed lockpick costs the pick; only after this server started one.
+RegisterNetEvent('bcc-doorlocks:RemoveLockpick', function(doorTable)
     local src = source
-    local user = Core.getUser(src)
-    if not user then
-        DBG:Error("User not found for source: " .. tostring(src))
-        return
-    end
-    DBG:Info("Removing lockpick for user: " .. src)
-    local lockpickItem = Config.LockPicking.minigameSettings.lockpickitem
-    local metadata = nil
-
-    exports.vorp_inventory:subItem(src, lockpickItem, 1, metadata, function(success)
-        if success then
-            DBG:Info("Lockpick successfully removed from user: " .. src)
-        else
-            DBG:Error("Failed to remove lockpick for user: " .. src)
-        end
-    end)
+    if not TakePendingLockpick(src, doorTable) then return end
+    local removed = DoorInventory.Remove(src, Config.LockPicking.minigameSettings.lockpickitem, 1)
+    if not removed.ok then DBG:Error("Failed to remove lockpick for user: " .. src) end
 end)
+
+-- Read-only release check, server console only.
+RegisterCommand('DoorlocksReleaseSmokeTest', function(source)
+    if source ~= 0 then return end
+    local probe = '00000000-0000-0000-0000-000000000000'
+    local jobs = Doorlocks.Call('feather-jobs', 'CheckAssignment', { characterId = probe, jobKey = 'doorlocks_probe' })
+    local role = Doorlocks.Call('feather-authority', 'FindRoleByKey', { roleKey = Config.Admin.role })
+    local legacy = DB.value([[SELECT COUNT(*) FROM `doorlocks`
+        WHERE `jobsallowedtoopen` NOT LIKE '[%' OR `ids_allowed` IS NULL OR `ids_allowed` REGEXP '[\\[,][0-9]']])
+    local inventory = GetResourceState('feather-inventory') == 'started'
+        and exports['feather-inventory']:initiate() or nil
+    local lockpickItem = inventory and inventory.Items.ItemExists(Config.LockPicking.minigameSettings.lockpickitem)
+    local tests = {
+        { 'development disabled', Config.devMode.active == false },
+        { 'jobs trust', jobs.ok == true },
+        { 'authority role owned', role.ok == true and role.value.ownerResource == GetCurrentResourceName() },
+        { 'no legacy access rows', tonumber(legacy) == 0 },
+        { 'lockpick item defined', not Config.LockPicking.allowlockpicking
+            or (type(lockpickItem) == 'table' and lockpickItem.ok == true and lockpickItem.value == true) }
+    }
+    local passed = 0
+    for _, test in ipairs(tests) do
+        if test[2] then passed = passed + 1 end
+        print(('[DoorlocksReleaseSmokeTest] %-24s %s'):format(test[1], test[2] and 'PASS' or 'FAIL'))
+    end
+    print(('[DoorlocksReleaseSmokeTest] lockpicking %s'):format(
+        GetResourceState('bcc-minigames') == 'started' and 'available (bcc-minigames)' or 'hidden (no minigame running)'))
+    print(('[DoorlocksReleaseSmokeTest] done %d/%d passed (read-only)'):format(passed, #tests))
+end, true)
 
 function table.contains(tbl, value)
     for _, v in pairs(tbl) do
@@ -486,5 +381,3 @@ function table.contains(tbl, value)
     end
     return false
 end
-
-BccUtils.Versioner.checkFile(GetCurrentResourceName(), 'https://github.com/BryceCanyonCounty/bcc-doorlocks')

@@ -1,6 +1,7 @@
 Config = {}
 
-Config.defaultlang = 'en_lang' -- Set your language here
+-- Translations come from feather-core: each player sees their own language
+-- (languages/*.lua register en_us, ro, pl, de, es and fr).
 -----------------------------------------------------
 
 -- Enable to see debug messages in the client and server consoles
@@ -34,17 +35,29 @@ Config.ManageDoorLocks = 'ManageDoorLocks' -- Command to open door management me
 Config.DoorRadius = 1.5 -- Default: 1.5 / Maximum Distance from Door to Operate
 -----------------------------------------------------
 
--- These are groups that will be able to create, manage and operate doors (set in 'group' in 'characters' table)
-Config.AllowedGroups = {
-    { groupName = 'admin' }, -- Example: { groupName = 'admin'
+-- Door staff (create, edit, delete and operate every door) is a feather-authority
+-- capability. bcc-doorlocks registers the capability and one role that grants it.
+-- Give the role from the server console: DoorlocksAdminGrant <server id>
+-- Feather Admin staff with one of staffRoles also count as door staff.
+Config.Admin = {
+    capability = 'staff.doorlocks.manage',
+    role = 'staff.doorlocks.admin',
+    staffRoles = { 'staff.admin.owner', 'staff.admin.administrator' }
 }
 
--- These are jobs that will be able to create, manage and operate doors *Optional* (set in 'job' in 'characters' table)
-Config.AllowedJobs = {
-    { jobName = '' }, -- Example: { jobName = 'police' }
+-- Doors list feather-jobs job keys (for example 'sheriff'). A character opens
+-- the door when it holds an open assignment for one of them.
+Config.JobAccess = {
+    requireOnDuty = true -- also require the assignment to be on duty
 }
+
+-- The server checks that the player stands near the door before changing it.
+-- Needs OneSync; when the server cannot see player positions the check is skipped.
+Config.ServerDistanceCheck = true
 -----------------------------------------------------
 
+-- Lockpicking is offered only while the minigame resource is running
+-- (bcc-minigames or rsd_lockpick); without it the prompt is hidden.
 Config.LockPicking = {
     minigameScript = 'bcc_minigames', -- bcc_minigames or rsd_lockpick
     allowlockpicking = true, -- If true players will be able to lockpick doors
