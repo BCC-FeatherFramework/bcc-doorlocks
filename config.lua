@@ -38,11 +38,13 @@ Config.DoorRadius = 1.5 -- Default: 1.5 / Maximum Distance from Door to Operate
 -- Door staff (create, edit, delete and operate every door) is a feather-authority
 -- capability. bcc-doorlocks registers the capability and one role that grants it.
 -- Give the role from the server console: DoorlocksAdminGrant <server id>
--- Feather Admin staff with one of staffRoles also count as door staff.
+-- Feather Admin staff holding one of staffCapabilities also count as door staff.
 Config.Admin = {
     capability = 'staff.doorlocks.manage',
     role = 'staff.doorlocks.admin',
-    staffRoles = { 'staff.admin.owner', 'staff.admin.administrator' }
+    -- staff.admin.audit.search is held by Admin administrators and owners
+    -- (feather-admin configs/permissions.lua); moderators do not have it.
+    staffCapabilities = { 'staff.admin.audit.search' }
 }
 
 -- Doors list feather-jobs job keys (for example 'sheriff'). A character opens

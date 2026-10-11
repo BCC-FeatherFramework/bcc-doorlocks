@@ -14,7 +14,7 @@ server now checks every request.
 | Before (VORP) | Now (Feather) |
 |---|---|
 | `vorp_core` user, `charIdentifier` | `feather-core` session, character UUID |
-| `Config.AllowedGroups` / `AllowedJobs` (`character.group`, `character.job`) | Authority capability `staff.doorlocks.manage` (role `staff.doorlocks.admin`), or Feather Admin staff roles in `Config.Admin.staffRoles` |
+| `Config.AllowedGroups` / `AllowedJobs` (`character.group`, `character.job`) | Authority capability `staff.doorlocks.manage` (role `staff.doorlocks.admin`), or Feather Admin administrators/owners through `Config.Admin.staffCapabilities` (`staff.admin.audit.search`) |
 | Door jobs checked against `character.job` | `feather-jobs` `CheckAssignment` on the job key; on duty when `Config.JobAccess.requireOnDuty` |
 | `vorp_inventory` `getItemCount` / `subItem` | `feather-inventory` `GetItemCount` / `RemoveItemByName` |
 | `bcc-utils` RPC, prompts, 3D text, debug | `feather-core` RPC, `feather-toolkit` prompts and `DrawText3D`, local `DBG` |
@@ -48,6 +48,13 @@ The upstream resource trusted the client for everything. Now:
   character IDs are dropped (they cannot be mapped to UUIDs). The console prints how
   many were dropped; re-add those players in the door menu.
 - `jobsallowedtoopen` holds feather-jobs job keys (for example `sheriff`).
+
+## Staff check fix (2026-10-11)
+
+The Feather Admin fallback called a feather-admin `GetStaffRole` export that does not exist, so
+Admin administrators and owners were silently not door staff (only `DoorlocksAdminGrant` worked).
+It now evaluates `Config.Admin.staffCapabilities` through feather-authority, as bcc-society and
+bcc-banks do.
 
 ## Trust needed in other resources
 

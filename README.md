@@ -1,133 +1,155 @@
-
 # bcc-doorlocks
 
-> This is an optimized, simple, and effective door lock script! It allows server admins to create doors that can be locked and unlocked by players!
+> Door locks for RedM on the **Feather Framework**. Staff create locks on any door; players open them with a job, a key item, by being on the door's allowed list, or by lockpicking.
+
+Version **2.0.0** is the Feather port of BryceCanyonCounty's bcc-doorlocks 1.3.2. The menus, prompts, door hashes and restart rules are unchanged; access is decided on the server through Feather domains. Port details: [FEATHER_PORT.md](FEATHER_PORT.md).
 
 ## Features
 
-- Each door can have up to 3 jobs that can unlock it!
-- Each door can have its own key item to open!
-- Each door can be lockpicked with a lockpick item!
-- Can set an unlimited amount of character IDs allowed to lock and unlock doors!
-- Exports for other scripts to create and delete doors!
-- Command `/ManageDoorLocks` for admins to manage doors!
-- Menu for creating and managing doors!
+- Up to 3 **feather-jobs** jobs per door (for example `sheriff`), optionally only while on duty.
+- A key item per door (any **feather-inventory** item).
+- A list of allowed characters per door (character UUIDs).
+- Lockpicking with a `lockpick` item when a minigame resource runs.
+- Doors kept open after a restart (`Config.KeepOpenOnRestart`).
+- `/ManageDoorLocks` menu for door staff: create, edit and delete doors.
+- A server API for other resources (housing, jails).
 
-## How it works
+Every lock, unlock, edit and lockpick is checked on the server, including that the player stands near the door.
 
-- To manage doors, use the `/ManageDoorLocks` command.
-- **Create a door**: Aim with a gun at the door you want to lock, press "G," and use the menu to configure the door.
-- **Delete a door**: Select the door from the list in the menu and remove it.
-- Once a door is created, walk up to it, and you will see prompts on the bottom right of your screen for interaction.
+## Who can open a door
 
-## Dependencies
+A player opens a locked door when **one** of these is true:
 
-- [vorp_core](https://github.com/VORPCORE/vorp-core-lua)
-- [vorp_inventory](https://github.com/VORPCORE/vorp_inventory-lua)
-- [vorp_character](https://github.com/VORPCORE/vorp_character-lua)
-- [feather-menu](https://github.com/FeatherFramework/feather-menu/releases)
-- [bcc-utils](https://github.com/BryceCanyonCounty/bcc-utils)
-- [bcc-minigames](https://github.com/BryceCanyonCounty/bcc-minigames/releases)
+| Rule | Configured in | Checked through |
+|---|---|---|
+| Holds one of the door's jobs (on duty when `Config.JobAccess.requireOnDuty`) | Door menu | feather-jobs `CheckAssignment` |
+| Carries the door's key item | Door menu | feather-inventory |
+| Their character is on the door's allowed list | Door menu (server ID or character UUID) | feather-core session |
+| Is door staff | See below | feather-authority |
+
+**Door staff** (create, edit, delete and open every door):
+
+- characters given the door role with `DoorlocksAdminGrant <server id>` (capability `staff.doorlocks.manage`);
+- Feather Admin administrators and owners (`Config.Admin.staffCapabilities`, default `staff.admin.audit.search`).
+
+## Requirements
+
+Start these before `bcc-doorlocks`:
+
+```cfg
+ensure feather-mysql
+ensure feather-core
+ensure feather-character
+ensure feather-notify
+ensure feather-toolkit
+ensure feather-menu-v2
+ensure feather-inventory
+ensure feather-organizations
+ensure feather-authority
+ensure feather-jobs
+ensure feather-admin
+ensure bcc-minigames      # optional, for lockpicking (or rsd_lockpick)
+ensure bcc-doorlocks
+```
+
+Without a minigame resource the lockpick prompt is hidden.
 
 ## Installation
 
-1. Ensure the dependencies are installed and updated.
-2. Add the `bcc-doorlocks` folder to your `resources` directory.
-3. Add `ensure bcc-doorlocks` to your `server.cfg`.
-4. The database schema will automatically initialize.
-5. Restart your server.
+1. Put the folder in `resources/[bcc]/bcc-doorlocks` and add `ensure bcc-doorlocks` after the resources above.
+2. Trust bcc-doorlocks in the Feather resources it calls (keep the entries already there):
+
+   **feather-jobs/config.lua** (read job assignments):
+
+   ```lua
+   Access = {
+       trustedReaders = { ['feather-jobs'] = true, ['feather-admin'] = true,
+           ['bcc-doorlocks'] = true },
+       -- other groups unchanged
+   }
+   ```
+
+   **feather-authority/config.lua** (the door staff role and capability; all five lists):
+
+   ```lua
+   Access = {
+       trustedReaders              = { --[[ ... ]] ['bcc-doorlocks'] = true },
+       trustedCapabilityRegistrars = { --[[ ... ]] ['bcc-doorlocks'] = true },
+       trustedRoleCreators         = { --[[ ... ]] ['bcc-doorlocks'] = true },
+       trustedGrantors             = { --[[ ... ]] ['bcc-doorlocks'] = true },
+       trustedAssigners            = { --[[ ... ]] ['bcc-doorlocks'] = true }
+   }
+   ```
+
+3. Import [sql/install_items.sql](sql/install_items.sql) once, for the `lockpick` item.
+4. Restart `feather-jobs`, `feather-authority`, then `ensure bcc-doorlocks`. Tables are created and old rows converted on start.
+5. Run `DoorlocksReleaseSmokeTest` in the server console and expect every line to pass.
+6. Give yourself the staff role: `DoorlocksAdminGrant <your server id>` (or use a Feather Admin administrator/owner character).
+
+Jobs on a door must exist in feather-jobs. They are registered by the resource that owns them, for example bcc-society's job types (`doctor`, `gunsmith`, `blacksmith`, ...).
+
+## Usage
+
+- `/ManageDoorLocks` opens the door menu.
+- **Create a door:** aim at the door with a gun, press **G**, then set its jobs, key item and allowed players.
+- **Delete a door:** pick it from the list in the menu.
+- Near a door, the prompts show **Lock/Unlock** and, when allowed, **Lockpick**.
 
 ### Keep selected doors open after restart
 
-Add each door's database ID (`doorid` in the `doorlocks` table) to
-`Config.KeepOpenOnRestart` in `config.lua`:
+Add each door's database ID (`doorid` in the `doorlocks` table) to `Config.KeepOpenOnRestart`:
 
 ```lua
-Config.KeepOpenOnRestart = {
-    12,
-    34,
-}
+Config.KeepOpenOnRestart = { 12, 34 }
 ```
 
-These doors are explicitly unlocked after the normal restart lock rules run.
-They can still be locked by an authorized player during normal gameplay.
+They are unlocked after the restart lock rules run and can still be locked during play.
 
-## API
+## Configuration
 
-### Create Door
+See [config.lua](config.lua). The Feather-specific parts:
+
+| Setting | Purpose |
+|---|---|
+| `Config.Admin` | Door staff capability and role, and the Feather Admin capabilities that also count as staff |
+| `Config.JobAccess.requireOnDuty` | Job doors open only while that job is on duty |
+| `Config.ServerDistanceCheck` | The server checks the player is near the door (needs OneSync) |
+| `Config.LockPicking` | Minigame (`bcc_minigames` or `rsd_lockpick`), lockpick item, attempts |
+| `Config.devMode.active` | Debug output; keep `false` on a live server |
+
+## Server API
+
+For other server resources (housing, jails). Character IDs are Feather character UUIDs; jobs are feather-jobs job keys.
 
 ```lua
-RegisterCommand('createDoorTest', function()
-    local door = exports['bcc-doorlocks']:createDoor() 
-    -- Creates a lock on the door and returns the door's table from `doorhashes.lua` for future deletion or storage.
-end)
+local Doors = exports['bcc-doorlocks']:getDoorLocksAPI()
+
+-- Create a door (doorInfo is the door hash table from the door list).
+Doors:AddDoor(doorInfo, { 'sheriff' }, 'none', { characterId }, true)
+
+-- Change an existing door.
+local door = Doors:GetDoorById(12)
+if door then
+    door:UpdateAllowedJobs({ 'sheriff', 'marshal' })
+    door:UpdateAllowedIds({ ownerCharacterId, guestCharacterId })
+    door:UpdateKeyItem('jail_key')
+    door:UpdateLockStatus(true)
+end
+
+-- All doors.
+-- Each entry: { id, info, jobs, keyItem, locked, idsAllowed }; false when there are none.
+for _, door in ipairs(Doors:GetAllDoors() or {}) do print(door.id, door.locked) end
 ```
 
-## Delete Door
+The client exports `createDoor`, `deleteDoor`, `deleteSpecificDoor` and `addPlayerToDoor` still exist for staff tools, but they only work for door staff.
 
-```lua
-RegisterCommand('deleteDoorTest', function()
-    exports['bcc-doorlocks']:deleteDoor() 
-    -- Deletes a door that you aim at and confirm.
-end)
-```
+## Console
 
-## Delete Specific Door
+| Command | Purpose |
+|---|---|
+| `DoorlocksReleaseSmokeTest` | Read-only release check: dev mode off, Jobs trust, Authority role, no legacy rows, lockpick item |
+| `DoorlocksAdminGrant <server id>` / `DoorlocksAdminRevoke <server id>` | Give or remove the door staff role |
 
-```lua
-RegisterCommand('deleteSpecificDoorTest', function()
-    local doorTable = { ... } -- Provide the specific door table
-    exports['bcc-doorlocks']:deleteSpecificDoor(doorTable)
-    -- Deletes a specific door using its table.
-end)
-```
+## Credits
 
-## Add Player to Door
-
-```lua
-RegisterCommand('addPlayerToDoorTest', function()
-    local playerId = 1 -- Replace with the actual player ID
-    local doorId = exports['bcc-doorlocks']:addPlayerToDoor(playerId)
-    -- Adds a player to the specified door and returns the updated door ID.
-end)
-```
-
-## Update Door Fields
-
-You can dynamically update door fields like `jobsallowedtoopen`, `keyitem`, and `ids_allowed` using RPC.
-
-### Example: Update Allowed Jobs
-
-```lua
-BccUtils.RPC:Call("bcc-doorlocks:UpdateDoorlock", {
-    doorId = 1, -- Replace with the door ID
-    field = "jobsallowedtoopen",
-    value = json.encode({"police", "doctor"})
-}, function(success)
-    if success then
-        print("Jobs updated successfully.")
-    else
-        print("Failed to update jobs.")
-    end
-end)
-```
-
-### Example: Get Door Field
-
-```lua
-BccUtils.RPC:Call("bcc-doorlocks:GetDoorField", {
-    doorId = 1, -- Replace with the door ID
-    field = "jobsallowedtoopen"
-}, function(result)
-    if result then
-        print("Current jobs: " .. result)
-    else
-        print("Failed to fetch jobs.")
-    end
-end)
-```
-
-## Notes
-
-- Ensure all door data is properly stored and fetched using the provided API functions.
-- Follow the installation and dependency requirements carefully to avoid compatibility issues.
+Original script by [BryceCanyonCounty](https://github.com/BryceCanyonCounty/bcc-doorlocks). Feather port by [BCC-FeatherFramework](https://github.com/BCC-FeatherFramework/bcc-doorlocks). Licensed GPL-3.0.
