@@ -90,6 +90,13 @@ exports('createDoor', function()
     end
 end)
 
+-- Lets the player aim at a door and confirm it (G), and returns the door hash
+-- table without creating anything. Any resource may use it; that resource's
+-- server decides whether to lock the door (through getDoorLocksAPI).
+exports('pickDoor', function()
+    return GetDoor('creation')
+end)
+
 exports('deleteDoor', function()
     DBG:Info("Exported function 'deleteDoor' called. Starting door deletion process.")
     local door = GetDoor('deletion')

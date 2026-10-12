@@ -40,6 +40,8 @@ function DoorLocksAPI:GetDoorById(doorId)
             local lockValue = lockStatus and "true" or "false"
             DB.exec("UPDATE doorlocks SET locked = ? WHERE doorid = ?", lockValue, self.id)
             self.locked = lockStatus
+            -- Every client applies the new state.
+            TriggerClientEvent('bcc-doorlocks:ClientSetDoorStatus', -1, self.info, lockStatus == true, true, false, false)
         end
 
         function door:UpdateAllowedJobs(newJobs)
@@ -61,6 +63,7 @@ function DoorLocksAPI:GetDoorById(doorId)
 
         function door:DeleteDoor()
             DB.exec("DELETE FROM doorlocks WHERE doorid = ?", self.id)
+            TriggerClientEvent('bcc-doorlocks:ClientSetDoorStatus', -1, self.info, false, false, true, false)
         end
 
         return door
@@ -91,14 +94,43 @@ function DoorLocksAPI:GetAllDoors()
 end
 
 -- Add a new door
+-- Returns the new door ID (nil on failure). Every client receives the lock
+-- straight away. doorInfo is the door hash table (or a JSON string of it);
+-- allowedIds are Feather character UUIDs.
 function DoorLocksAPI:AddDoor(doorInfo, allowedJobs, keyItem, allowedIds, lockStatus)
+    if type(doorInfo) == "string" then
+        local ok, decoded = pcall(json.decode, doorInfo)
+        doorInfo = ok and decoded or nil
+    end
+    if type(doorInfo) ~= "table" then return nil end
     local lockValue = lockStatus and "true" or "false"
-    local jobsJSON = json.encode(allowedJobs)
-    local idsJSON = json.encode(allowedIds)
-    local doorInfoJSON = json.encode(doorInfo)
-
-    DB.exec(
+    local doorId = DB.insert(
         "INSERT INTO doorlocks (doorinfo, jobsallowedtoopen, keyitem, locked, ids_allowed) VALUES (?, ?, ?, ?, ?)",
-        doorInfoJSON, jobsJSON, keyItem or "none", lockValue, idsJSON
+        json.encode(doorInfo), json.encode(allowedJobs or {}), keyItem or "none", lockValue, json.encode(allowedIds or {})
     )
+    TriggerClientEvent('bcc-doorlocks:ClientSetDoorStatus', -1, doorInfo, lockStatus == true, true, false, false)
+    return tonumber(doorId)
+end
+
+local function firstHash(doorInfo)
+    if type(doorInfo) ~= "table" then return nil end
+    if type(doorInfo[1]) == "table" then return tonumber(doorInfo[1][1]) end -- double door
+    return tonumber(doorInfo[1])
+end
+
+-- The door locking that door (matched by its door hash), or false.
+function DoorLocksAPI:GetDoorByInfo(doorInfo)
+    if type(doorInfo) == "string" then
+        local ok, decoded = pcall(json.decode, doorInfo)
+        doorInfo = ok and decoded or nil
+    end
+    local hash = firstHash(doorInfo)
+    if not hash then return false end
+    for _, row in ipairs(DB.query("SELECT doorid, doorinfo FROM doorlocks WHERE doorinfo LIKE ?", '%' .. tostring(math.floor(hash)) .. '%') or {}) do
+        local ok, info = pcall(json.decode, row.doorinfo)
+        if ok and firstHash(info) == hash then
+            return self:GetDoorById(row.doorid)
+        end
+    end
+    return false
 end
