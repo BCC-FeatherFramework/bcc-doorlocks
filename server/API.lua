@@ -129,7 +129,8 @@ function DoorLocksAPI:GetDoorByInfo(doorInfo)
     for _, row in ipairs(DB.query("SELECT doorid, doorinfo FROM doorlocks WHERE doorinfo LIKE ?", '%' .. tostring(math.floor(hash)) .. '%') or {}) do
         local ok, info = pcall(json.decode, row.doorinfo)
         if ok and firstHash(info) == hash then
-            return self:GetDoorById(row.doorid)
+            -- Not self: callers in other resources pass a copy of the API table.
+            return DoorLocksAPI:GetDoorById(row.doorid)
         end
     end
     return false
