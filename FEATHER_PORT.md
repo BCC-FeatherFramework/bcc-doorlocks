@@ -71,6 +71,7 @@ Restart feather-jobs and feather-authority after changing them, then bcc-doorloc
 |---|---|
 | `DoorlocksReleaseSmokeTest` | Read-only release check: dev mode off, Jobs trust, Authority role, no legacy rows, lockpick item |
 | `DoorlocksAdminGrant <server id>` / `DoorlocksAdminRevoke <server id>` | Give or remove the door staff role for that player's character |
+| `DoorlocksJobCheck <character uuid> <job key>` | Read-only: whether the character holds the job and whether a job door would open for it (on duty when `Config.JobAccess.requireOnDuty`); works offline |
 
 In game: `/ManageDoorLocks` (staff) opens the door management menu.
 
@@ -85,7 +86,9 @@ and per door `UpdateAllowedIds`, `UpdateAllowedJobs`, `UpdateKeyItem`, `UpdateLo
 ## Remaining work
 
 1. Live test: create a door, lock/unlock as staff, as a job holder on and off duty,
-   with a key item, as an allowed character, and as a stranger (denied).
+   with a key item, as an allowed character, and as a stranger (denied). The job
+   rule itself passed offline on 2026-10-17: `DoorlocksJobCheck` for a bcc-society
+   `doctor` reported the door closed off duty and open on duty.
 2. Double doors, jail-door seeding, restart lock rules and door deletion.
 3. Lockpicking once a minigame resource is installed. Import `sql/install_items.sql` for the
    `lockpick` item (also in bcc-craft).

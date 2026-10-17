@@ -373,6 +373,20 @@ RegisterCommand('DoorlocksReleaseSmokeTest', function(source)
     print(('[DoorlocksReleaseSmokeTest] done %d/%d passed (read-only)'):format(passed, #tests))
 end, true)
 
+-- Read-only, server console only: what a job door decides for a character. The
+-- character may be offline. Usage: DoorlocksJobCheck <characterUuid> <jobKey>
+RegisterCommand('DoorlocksJobCheck', function(source, args)
+    if source ~= 0 then return end
+    local characterId, jobKey = args[1] and args[1]:lower(), args[2]
+    if not DoorCharacters.IsUuid(characterId) or not DoorJobs.IsJobKey(jobKey) then
+        return print('[DoorlocksJobCheck] usage: DoorlocksJobCheck <characterUuid> <jobKey>')
+    end
+    local held = Doorlocks.Call('feather-jobs', 'CheckAssignment', { characterId = characterId, jobKey = jobKey })
+    print(('[DoorlocksJobCheck] %s holds %s: %s; requireOnDuty=%s; door opens: %s'):format(
+        characterId, jobKey, held.ok and tostring(held.value.matched) or ('error ' .. tostring(held.code)),
+        tostring(Config.JobAccess.requireOnDuty), tostring(DoorJobs.Holds(characterId, jobKey))))
+end, true)
+
 function table.contains(tbl, value)
     for _, v in pairs(tbl) do
         if v == value then
